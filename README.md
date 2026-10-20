@@ -48,7 +48,7 @@ Para os casos calculados **somente pela área** (sem notas fiscais nem folha de 
    **“Ver texto lido”** mostra o texto exatamente como o programa leu cada arquivo (só logo após a leitura do lote; não fica salvo) — útil para conferir ou relatar erros de leitura.
 6. **Imprimir memória + decisão dos simples** gera, numa só impressão, os documentos de todos os casos simples.
 
-**PDFs sem texto** (por exemplo, guias geradas pelo “Microsoft Print to PDF”, em que as letras viram desenho, ou documentos escaneados) são lidos por **reconhecimento de texto em imagem (OCR)**, também sem internet — alguns segundos por página, sem travar a tela. O relatório indica o que foi lido por OCR; se for o Alvará de Habite-se, o processo fica 🟡 para conferência. Valores de boletos lidos por OCR são confirmados pelos dígitos verificadores da linha digitável. Na tela da leitura em lote há opções para desligar o OCR de PDFs ou ligá-lo também para imagens (JPG/PNG).
+**Guias e carnês de ISS em PDF sem texto** (por exemplo, gerados pelo “Microsoft Print to PDF”, em que as letras viram desenho, ou escaneados) são lidos por **reconhecimento de texto em imagem (OCR)**, sem internet — alguns segundos por página, sem travar a tela. Como esses arquivos não têm texto, o OCR só é usado quando o **nome do arquivo** indica guia/carnê: ISS, ISSQN, DAM, guia, boleto ou carnê. Os demais PDFs sem texto não são lidos e ficam apontados para conferência. O valor lido por OCR é confirmado pelos dígitos verificadores da linha digitável. O OCR pode ser desligado na tela da leitura em lote.
 
 Com várias unidades, cada guia de ISS é comparada com o ISS da unidade correspondente, e a soma das guias com o ISS total (avisando se faltar guia para alguma unidade).
 

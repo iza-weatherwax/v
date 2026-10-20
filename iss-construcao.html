@@ -1152,7 +1152,7 @@ const CONFIG_PADRAO = {
   enderecoOrgao: "Av. Senador Melo Viana, 176, B. Goiás – CEP 38442-192\n(34) 3690-3010 / 3690-3016\nfiscaliss@araguari.mg.gov.br",
   cidade: "Araguari",
   fiscal: { nome: "", cargo: "Auditor Fiscal da Receita Municipal", matricula: "" },
-  ocrPdf: true, ocrImagens: false,
+  ocrPdf: true,
   tabela: null
 };
 
@@ -2242,13 +2242,8 @@ async function ocrCanvas(cv) {
 }
 // Canvas branco com no máximo `max` pixels no maior lado.
 function _canvas(l, a) { const c = document.createElement("canvas"); c.width = Math.round(l); c.height = Math.round(a); const x = c.getContext("2d"); x.fillStyle = "#fff"; x.fillRect(0, 0, c.width, c.height); return c; }
-async function ocrImagem(f) {
-  const bmp = await createImageBitmap(f);
-  const k = Math.min(1, 3000 / Math.max(bmp.width, bmp.height));
-  const cv = _canvas(bmp.width * k, bmp.height * k);
-  cv.getContext("2d").drawImage(bmp, 0, 0, cv.width, cv.height);
-  return ocrCanvas(cv);
-}
+// O OCR só é usado em PDFs sem texto que pareçam guia/carnê de ISS. Sem texto, a pista é o nome do arquivo.
+const pareceCobranca = nome => RE_NOME_COBRANCA.test(dobrar(nome).replace(/\.[a-z0-9]+$/, ""));
 const _temTexto = t => String(t || "").replace(/\s/g, "").length >= 15;
 // Lê o texto de cada página; páginas sem texto passam pelo OCR (se ligado).
 async function lerPDF(buf, opcoes = {}) {
@@ -2314,29 +2309,24 @@ function xmlParaTexto(xml, odt) {
 async function lerArquivo(f, progresso) {
   const nome = f.name, ext = extensao(nome);
   const r = { nome, situacao: "lido", paginas: [] };
-  const ocrPdf = db.config.ocrPdf !== false;
+  const ocrLigado = db.config.ocrPdf !== false, cobranca = pareceCobranca(nome);
   try {
     if (ext === "pdf") {
-      const lido = await lerPDF(await f.arrayBuffer(), { ocr: ocrPdf, progresso: (i, n) => progresso && progresso(`reconhecendo texto (OCR) de “${nome}”, página ${i} de ${n}`) });
+      const lido = await lerPDF(await f.arrayBuffer(), { ocr: ocrLigado && cobranca, progresso: (i, n) => progresso && progresso(`reconhecendo texto (OCR) de “${nome}”, página ${i} de ${n}`) });
       r.paginas = lido.paginas;
       if (lido.paginasOcr.length) r.paginasOcr = lido.paginasOcr;
       const comTexto = r.paginas.filter(_temTexto).length;
       if (!comTexto) {
         r.situacao = "escaneado"; r.paginas = [];
-        r.detalhe = lido.erroOcr ? `o OCR falhou (${lido.erroOcr})` : ocrPdf ? "nem o OCR encontrou texto" : "o OCR está desligado";
+        r.detalhe = lido.erroOcr ? `o OCR falhou (${lido.erroOcr})`
+          : !cobranca ? "o OCR só é usado em guias/carnês de ISS, identificados pelo nome do arquivo"
+          : ocrLigado ? "nem o OCR encontrou texto" : "o OCR está desligado";
       }
       else if (comTexto < r.paginas.length) r.paginasSemTexto = r.paginas.length - comTexto;
     } else if (ext === "docx") r.paginas = [xmlParaTexto(await textoDoZip(await f.arrayBuffer(), "word/document.xml"), false)];
     else if (ext === "odt") r.paginas = [xmlParaTexto(await textoDoZip(await f.arrayBuffer(), "content.xml"), true)];
     else if (ext === "txt") r.paginas = [await f.text()];
-    else if (EXT_IMAGEM.includes(ext)) {
-      r.situacao = "imagem";
-      if (db.config.ocrImagens && ["jpg", "jpeg", "png", "gif", "bmp", "webp"].includes(ext)) {
-        if (progresso) progresso(`reconhecendo texto (OCR) da imagem “${nome}”`);
-        const t = await ocrImagem(f);
-        if (_temTexto(t)) { r.situacao = "lido"; r.paginas = [t]; r.paginasOcr = [1]; }
-      }
-    }
+    else if (EXT_IMAGEM.includes(ext)) r.situacao = "imagem";
     else { r.situacao = "nao_suportado"; r.detalhe = ext === "doc" ? "Word antigo (.doc); salve como .docx ou PDF" : `formato .${ext || "?"} não suportado`; }
   } catch (e) { r.situacao = "erro"; r.paginas = []; r.detalhe = "erro na leitura (" + e.message + ")"; }
   return r;
@@ -2465,8 +2455,7 @@ function vistaLote() {
     <p class="muted">Tudo é feito neste computador; nenhum arquivo é enviado para a internet. Nenhum processo é concluído automaticamente.</p>
     ${estadoLote.rodando ? `<div class="aviso info">${esc(estadoLote.msg)}</div>`
       : `<div class="opcoes" style="flex-direction:column;gap:4px;margin:0 0 10px">
-          <label><input type="checkbox" data-cfg-bool="ocrPdf" ${db.config.ocrPdf !== false ? "checked" : ""}> Ler PDFs sem texto por reconhecimento de imagem (OCR) — alguns segundos por página</label>
-          <label><input type="checkbox" data-cfg-bool="ocrImagens" ${db.config.ocrImagens ? "checked" : ""}> Ler também imagens (JPG/PNG) por OCR</label></div>
+          <label><input type="checkbox" data-cfg-bool="ocrPdf" ${db.config.ocrPdf !== false ? "checked" : ""}> Ler por reconhecimento de imagem (OCR) as guias e carnês de ISS em PDF sem texto — só arquivos com ISS, ISSQN, DAM, guia, boleto ou carnê no nome (alguns segundos por página)</label></div>
         <label class="btn pri" style="display:inline-block">Escolher pasta dos processos…<input type="file" id="pastaLote" webkitdirectory directory multiple hidden></label>`}
   </div>
   ${lote ? `<div class="card"><div class="acoes" style="justify-content:space-between;margin-bottom:8px">
