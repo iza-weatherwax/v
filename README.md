@@ -17,6 +17,8 @@ Na lista de **Processos**, marque um ou vários processos (ou use “Arquivar to
 - **Arquivar** tira o processo da lista de uso e da memória principal — o assistente continua rápido mesmo com muitos processos. Os arquivados ficam na aba **Arquivados**, de onde podem ser restaurados, e continuam no relatório CSV e no backup.
 - **Excluir** remove o processo definitivamente (linhas já gravadas no relatório CSV não são apagadas).
 
+Para **ordenar a lista** (por exemplo, em ordem alfabética pelo requerente), clique no título da coluna — Processo, Requerente, Obra, Área, ISS, Situação ou Data; clique de novo para inverter. Acentos e maiúsculas não atrapalham a ordem alfabética, números de processo ficam em ordem numérica e a ordem escolhida fica salva.
+
 ## Fluxo
 
 1. **Identificação** — nº do processo (o ano do número define a linha da tabela: processo 6184/2025 → valores de 2025), requerente, CPF/CNPJ, CCI e endereço.

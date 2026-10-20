@@ -113,6 +113,10 @@ ol.narr small{display:block;color:var(--muted);font-size:12px}
 ol.narr .nota .ic{color:var(--primary)}
 .texto-lido pre{white-space:pre-wrap;word-break:break-word;background:#f6f7f9;border:1px solid var(--line);border-radius:6px;padding:8px;font-size:12px;max-height:360px;overflow:auto;margin:4px 0}
 .folha ol.narr li{border-color:#bbb;font-size:9.5pt} .folha ol.narr small{color:#333;font-size:8.5pt}
+th.ordenavel{cursor:pointer;user-select:none;white-space:nowrap}
+th.ordenavel:hover{color:var(--text)}
+th.ordenavel .seta{font-size:10px;opacity:.45}
+th.ordenavel.ativo{color:var(--primary)} th.ordenavel.ativo .seta{opacity:1}
 .barra-sel{display:flex;gap:8px;align-items:center;flex-wrap:wrap;background:#eaf1fb;border-radius:6px;padding:8px 10px;margin-bottom:10px}
 tr.sel td{background:#f2f6fc}
 table.dados.lote tr.det td{border-bottom:2px solid var(--line);padding-top:0}
@@ -1381,14 +1385,42 @@ function linhaProcesso(p, arquivado) {
     <td class="muted">${new Date(arquivado ? p.arquivadoEm : p.atualizadoEm).toLocaleDateString("pt-BR")}</td>
     <td class="acoes">${acoesLinha}</td></tr>`;
 }
+// Ordenação da lista: clique no título da coluna (de novo inverte). Texto em ordem alfabética (sem diferenciar
+// acentos e maiúsculas; números em ordem numérica); vazios sempre no fim.
+const COLUNAS_ORDEM = {
+  processo: { titulo: "Processo", valor: p => p.processo || "" },
+  requerente: { titulo: "Requerente", valor: p => p.requerente || "" },
+  obra: { titulo: "Obra", valor: p => TIPOS_OBRA[p.tipoObra] || "" },
+  area: { titulo: "Área", valor: (p, r) => r.area, num: true },
+  iss: { titulo: "ISS", valor: (p, r) => r.iss, num: true },
+  situacao: { titulo: "Situação", valor: (p, r) => (p.status === "concluido" ? "Concluído" : "Rascunho") + (r.decaido ? " decaído" : "") },
+  data: { titulo: "Data", valor: (p, r, arq) => arq ? p.arquivadoEm : p.atualizadoEm, num: true, decrescente: true }
+};
+const _colator = new Intl.Collator("pt-BR", { sensitivity: "base", numeric: true });
+function ordenarProcessos(ps, arq) {
+  const o = db.config.ordemLista || { campo: "data", asc: false };
+  const col = COLUNAS_ORDEM[o.campo] || COLUNAS_ORDEM.data;
+  const itens = ps.map(p => ({ p, v: col.valor(p, resultado(p), arq) }));
+  const vazio = v => v === "" || v == null || (col.num && !(Number(v) > 0) && o.campo !== "data");
+  itens.sort((a, b) => {
+    if (vazio(a.v) !== vazio(b.v)) return vazio(a.v) ? 1 : -1;
+    const c = col.num ? a.v - b.v : _colator.compare(String(a.v).trim(), String(b.v).trim());
+    return (o.asc ? c : -c) || _colator.compare(a.p.processo || "", b.p.processo || "");
+  });
+  return itens.map(x => x.p);
+}
+function tituloOrdem(campo, rotulo, cls = "") {
+  const o = db.config.ordemLista || { campo: "data", asc: false };
+  const ativo = o.campo === campo;
+  return `<th class="ordenavel ${cls}${ativo ? " ativo" : ""}" data-ordem="${campo}" title="Ordenar por ${rotulo.toLowerCase()}">${rotulo} <span class="seta">${ativo ? (o.asc ? "▲" : "▼") : "↕"}</span></th>`;
+}
 function vistaLista() {
   const arq = abaLista === "arquivados";
   if (arq && arquivados === null) { carregarArquivados().then(render); }
   const f = filtro.toLowerCase();
   const fonte = arq ? (arquivados || []) : Object.values(db.processos);
-  const ps = fonte
-    .filter(p => !f || [p.processo, p.requerente, p.documento, p.cci, p.endereco].join(" ").toLowerCase().includes(f))
-    .sort((a, b) => arq ? b.arquivadoEm - a.arquivadoEm : b.atualizadoEm - a.atualizadoEm);
+  const ps = ordenarProcessos(fonte
+    .filter(p => !f || [p.processo, p.requerente, p.documento, p.cci, p.endereco].join(" ").toLowerCase().includes(f)), arq);
   const idsFonte = new Set(fonte.map(p => p.id));
   for (const id of [...selecionados]) if (!idsFonte.has(id)) selecionados.delete(id);
   const nSel = selecionados.size;
@@ -1410,9 +1442,9 @@ function vistaLista() {
       <button data-lista="arquivados" class="${arq ? "ativo" : ""}">Arquivados (${nArq})</button></div>
     <p class="muted" style="margin-top:0">${arq
       ? "Processos arquivados não ficam na memória principal nem na lista de uso (o assistente fica mais rápido), mas continuam neste navegador, no relatório CSV e no backup. Para abrir um deles, restaure-o."
-      : `Marque os processos para arquivar ou excluir vários de uma vez.${nConcl ? ` <button class="btn peq" data-acao="arquivarConcluidos">Arquivar todos os concluídos (${nConcl})</button>` : ""}`}</p>
+      : `Clique no título de uma coluna para ordenar (de novo para inverter). Marque os processos para arquivar ou excluir vários de uma vez.${nConcl ? ` <button class="btn peq" data-acao="arquivarConcluidos">Arquivar todos os concluídos (${nConcl})</button>` : ""}`}</p>
     ${barraSel}
-    ${ps.length ? `<div class="rolagem"><table class="dados"><thead><tr><th><input type="checkbox" data-sel-todos ${todosVisiveis ? "checked" : ""} aria-label="Selecionar todos"></th><th>Processo</th><th>Requerente</th><th>Obra</th><th class="num">Área</th><th class="num">ISS</th><th>Situação</th><th>${arq ? "Arquivado em" : "Atualizado"}</th><th></th></tr></thead>
+    ${ps.length ? `<div class="rolagem"><table class="dados"><thead><tr><th><input type="checkbox" data-sel-todos ${todosVisiveis ? "checked" : ""} aria-label="Selecionar todos"></th>${tituloOrdem("processo", "Processo")}${tituloOrdem("requerente", "Requerente")}${tituloOrdem("obra", "Obra")}${tituloOrdem("area", "Área", "num")}${tituloOrdem("iss", "ISS", "num")}${tituloOrdem("situacao", "Situação")}${tituloOrdem("data", arq ? "Arquivado em" : "Atualizado")}<th></th></tr></thead>
       <tbody>${ps.map(p => linhaProcesso(p, arq)).join("")}</tbody></table></div>`
       : `<p class="muted">${filtro ? "Nenhum processo encontrado." : arq ? (arquivados === null ? "Carregando…" : "Nenhum processo arquivado.") : "Nenhum processo em uso. Clique em “Novo processo” ou use a “Leitura em lote”."}</p>`}
     ${arq && arquivados && arquivados.length ? `<div class="acoes" style="margin-top:12px"><button class="btn" data-acao="baixarArquivados">Baixar arquivados (.json)</button></div>` : ""}
@@ -2111,6 +2143,13 @@ function imprimirFolhas(html) {
 document.addEventListener("click", e => {
   const nav = e.target.closest("[data-nav]");
   if (nav) { ir(nav.dataset.nav); return; }
+  const ord = e.target.closest("[data-ordem]");
+  if (ord) {
+    const o = db.config.ordemLista || { campo: "data", asc: false };
+    const col = COLUNAS_ORDEM[ord.dataset.ordem];
+    db.config.ordemLista = o.campo === ord.dataset.ordem ? { campo: o.campo, asc: !o.asc } : { campo: ord.dataset.ordem, asc: !col.decrescente };
+    salvar(true); render(); return;
+  }
   const lst = e.target.closest("[data-lista]");
   if (lst) { abaLista = lst.dataset.lista; selecionados.clear(); render(); return; }
   const aba = e.target.closest("[data-aba]");
