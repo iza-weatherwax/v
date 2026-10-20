@@ -50,6 +50,8 @@ Para os casos calculados **somente pela área** (sem notas fiscais nem folha de 
 
 **Guias e carnês de ISS em PDF sem texto** (por exemplo, gerados pelo “Microsoft Print to PDF”, em que as letras viram desenho, ou escaneados) são lidos por **reconhecimento de texto em imagem (OCR)**, sem internet — alguns segundos por página, sem travar a tela. Como esses arquivos não têm texto, o OCR só é usado quando o **nome do arquivo** indica guia/carnê: ISS, ISSQN, DAM, guia, boleto ou carnê. Os demais PDFs sem texto não são lidos e ficam apontados para conferência. O valor lido por OCR é confirmado pelos dígitos verificadores da linha digitável. O OCR pode ser desligado na tela da leitura em lote.
 
+**Documentos anexados mais de uma vez** não são contados em dobro: arquivos idênticos são reconhecidos pelo conteúdo e ignorados (fica um aviso “para conhecimento”), e o mesmo carnê/guia em arquivos diferentes (outra digitalização, outro nome) é reconhecido pela linha digitável de cada parcela — cada parcela entra uma vez só. Guias sem linha digitável legível são comparadas por valor e vencimento.
+
 Com várias unidades, cada guia de ISS é comparada com o ISS da unidade correspondente, e a soma das guias com o ISS total (avisando se faltar guia para alguma unidade).
 
 Nada é enviado para a internet e nenhum processo é concluído automaticamente. Processos com número já existente no assistente são ignorados.

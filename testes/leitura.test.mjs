@@ -272,3 +272,38 @@ test("várias guias: uma por unidade e a soma com o ISS total", () => {
   assert.equal(r[0].t, "alerta");
   assert.match(r[0].msg, /^A guia de ISS \(dam\.pdf\) cobra R\$ 4\.026,40/);
 });
+
+test("documentos anexados várias vezes: arquivo idêntico e o mesmo carnê não contam duas vezes", () => {
+  const carne = `CARNÊ DE ISS - IMPOSTO SOBRE SERVIÇOS
+Parcela 1/2  Vencimento: 10/11/2026
+${linhaArrecadacao(2322.86, 1)}
+Parcela 2/2  Vencimento: 10/12/2026
+${linhaArrecadacao(2322.86, 2)}`;
+  // 1) o mesmo arquivo anexado duas vezes (mesmo hash)
+  let r = analisarProcesso("1500-2026", [pdf("habite-se.pdf", HABITE), { ...pdf("carne.pdf", carne), hash: "abc" }, { ...pdf("carne (1).pdf", carne), hash: "abc" }]);
+  assert.equal(r.guias.length, 1);
+  assert.equal(r.guias[0].total, 4645.72);
+  assert.ok(r.avisos.some(a => /“carne \(1\)\.pdf” é idêntico a “carne\.pdf”/.test(a)));
+  assert.equal(compararGuiasComIss(r.guias, 4645.72).every(c => c.t !== "alerta"), true);
+  // 2) o mesmo carnê digitalizado de novo (texto diferente, mesmas linhas digitáveis)
+  r = analisarProcesso("1500-2026", [pdf("habite-se.pdf", HABITE), pdf("carne.pdf", carne), pdf("scan carne ISS.pdf", "Digitalizado em 01/10/2026\n" + carne)]);
+  assert.equal(r.guias.length, 1);
+  assert.ok(r.avisos.some(a => /repete o carnê de ISS de “carne\.pdf”/.test(a)));
+  // 3) arquivo com uma parcela repetida e uma nova: só a nova entra
+  const parcela2e3 = `CARNÊ DE ISS\nParcela 2/2\n${linhaArrecadacao(2322.86, 2)}\nParcela extra 3/3\n${linhaArrecadacao(100, 3)}`;
+  r = analisarProcesso("1500-2026", [pdf("habite-se.pdf", HABITE), pdf("carne.pdf", carne), pdf("outro.pdf", parcela2e3)]);
+  assert.equal(r.guias.length, 2);
+  assert.equal(r.guias[1].total, 100);
+  assert.ok(r.narrativa.some(n => /1 parcela\(s\) de “outro\.pdf” já estavam em “carne\.pdf”/.test(n.msg)));
+  // 4) guia sem linha digitável repetida: mesmo valor e vencimento
+  const guiaTexto = "GUIA DE RECOLHIMENTO - ISSQN\nVencimento: 30/10/2026\nValor total: R$ 4.645,72\nCódigo de barras";
+  r = analisarProcesso("1500-2026", [pdf("habite-se.pdf", HABITE), pdf("guia iss.pdf", guiaTexto), pdf("guia iss 2.pdf", guiaTexto + "\nCópia")]);
+  assert.equal(r.guias.length, 1);
+  assert.ok(r.avisos.some(a => /mesmo valor e vencimento/.test(a)));
+});
+
+test("o tipo do imposto: ISS sozinho, ISSQN, I.S.S. e imposto sobre serviços", () => {
+  const M3 = vm.createContext({}); vm.runInContext(bloco("motor") + bloco("leitura") + ";this.re=RE_MENCAO_ISS;", M3);
+  for (const t of ["carne de iss", "tributo: issqn", "i.s.s. construcao", "imposto sobre servicos"]) assert.ok(M3.re.test(t), t);
+  for (const t of ["comissao", "permissao", "taxa de licenca"]) assert.ok(!M3.re.test(t), t);
+});

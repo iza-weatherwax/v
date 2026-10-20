@@ -654,7 +654,7 @@ const RE_NOME_ISS = /(?:^|[^a-z])(?:iss|issqn)(?:[^a-z]|$)/;
 const RE_GUIA_DOC = /documento (?:unico )?de arrecadacao|guia (?:de|para) (?:recolhimento|arrecadacao|pagamento)|\bdam\b|\bdarm\b|\bduam\b|\bcarne\b/;
 const RE_BOLETO = /linha digitavel|codigo de barras|nosso numero|pagavel (?:em qualquer|preferencialmente)|ficha de compensacao|recibo do pagador|recibo do sacado/;
 // O tipo de imposto no documento: ISS, I.S.S., ISSQN ou "imposto sobre serviços".
-const RE_MENCAO_ISS = /\bissqn?\b|\bi\. ?s\. ?s\b|\bi\. ?s\. ?s\. ?q\. ?n\b|imposto sobre (?:servicos|serv\b|o servico)/;
+const RE_MENCAO_ISS = /\biss(?:qn)?\b|\bi\. ?s\. ?s\b|\bi\. ?s\. ?s\. ?q\. ?n\b|imposto sobre (?:servicos|serv\b|o servico)/;
 // Carnê: a palavra "carnê" ou parcelas numeradas de um total maior que 1 (ex.: 2/5). "Parcela única" não é carnê.
 const RE_CARNE = /\bcarne\b|\bparcela\s*\d{1,2}\s*(?:\/|de)\s*(?:[2-9]|\d{2})\b/;
 // "Autenticação mecânica" é só um campo em branco do boleto: não indica pagamento.
@@ -831,6 +831,18 @@ function analisarProcesso(nomePasta, arquivos) {
   const alerta = (msg, fonte) => { alertas.push(msg); diz("alerta", msg, fonte); };
   const avisa = (msg, fonte) => { avisos.push(msg); diz("aviso", msg, fonte); };
 
+  // 0. Arquivos repetidos (o mesmo documento anexado mais de uma vez): só o primeiro é lido.
+  // Iguais pelo conteúdo do arquivo (hash) ou pelo texto inteiro.
+  const repetido = new Map(), vistos = new Map();
+  // O de nome mais simples é tratado como o original (ex.: "carne.pdf" e não "carne (1).pdf").
+  for (const a of [...arquivos].sort((x, y) => x.nome.length - y.nome.length || x.nome.localeCompare(y.nome))) {
+    const textoTodo = (a.paginas || []).join("\n").replace(/\s+/g, " ").trim();
+    const chaves = [a.hash && "h:" + a.hash, textoTodo.length > 50 && "t:" + textoTodo].filter(Boolean);
+    const original = chaves.map(k => vistos.get(k)).find(Boolean);
+    if (original) repetido.set(a.nome, original); else chaves.forEach(k => vistos.set(k, a.nome));
+  }
+  arquivos = arquivos.map(a => repetido.has(a.nome) ? { ...a, situacao: "duplicado", detalhe: `idêntico a “${repetido.get(a.nome)}”`, paginas: [] } : a);
+
   // 1. Arquivos e tipo de cada documento
   const paginas = [];
   for (const a of arquivos) {
@@ -851,6 +863,7 @@ function analisarProcesso(nomePasta, arquivos) {
   const outros = arquivos.filter(a => a.situacao === "nao_suportado" || a.situacao === "erro");
   diz("info", `Arquivos do processo: ${arquivos.length}. Lidos: ${lidos.length}` +
     (lidos.length ? ` (${lidos.map(a => `${a.nome}, ${(a.paginas || []).length} pág.`).join("; ")})` : "") + ".");
+  for (const [nome, orig] of repetido) avisa(`O arquivo “${nome}” é idêntico a “${orig}” (o mesmo documento foi anexado mais de uma vez) e foi ignorado.`, { arquivo: nome, pagina: 0, trecho: "" });
   if (imagens.length) diz("info", `Imagens não lidas (${imagens.length}): ${imagens.map(a => a.nome).join(", ")}. O programa não lê imagens; se alguma for nota fiscal ou documento da obra, confira.`);
   for (const a of escaneados) alerta(`O PDF “${a.nome}” não tem texto e não foi lido${a.detalhe ? ` (${a.detalhe})` : ""}. Confira o conteúdo.`);
   for (const a of outros) alerta(`O arquivo “${a.nome}” não foi lido: ${a.detalhe || "formato não suportado"}.`);
@@ -877,7 +890,9 @@ function analisarProcesso(nomePasta, arquivos) {
 
   // 3. Guias, boletos e carnês
   const guias = [];
+  const codigosVistos = new Map(); // linha digitável → arquivo onde apareceu primeiro
   for (const a of arquivos) {
+    if (a.situacao === "duplicado") continue;
     const nomeDob = dobrar(a.nome).replace(/\.[a-z0-9]+$/, "");
     const nomeCobranca = RE_NOME_COBRANCA.test(nomeDob), nomeIss = RE_NOME_ISS.test(nomeDob);
     const pgs = paginas.filter(pg => pg.arquivo === a.nome);
@@ -895,7 +910,10 @@ function analisarProcesso(nomePasta, arquivos) {
         linhas.push({ ...l, rotulo: rot, fonte: _fonte(pg, l.indice, l.fim) });
       }
     }
-    const cobranca = linhas.length > 0 || pgs.some(pg => RE_GUIA_DOC.test(pg.dob) || RE_BOLETO.test(pg.dob));
+    // Cobrança de verdade: linha digitável, sinais de boleto, ou guia com vencimento e valor.
+    // (Um requerimento que só menciona "a guia de recolhimento do ISS" não é uma guia.)
+    const cobranca = linhas.length > 0 || pgs.some(pg => RE_BOLETO.test(pg.dob) ||
+      (RE_GUIA_DOC.test(pg.dob) && /vencimento/.test(pg.dob) && /\d{1,3}(?:\.\d{3})*,\d{2}/.test(pg.dob)));
     const mencionaIss = pgs.some(pg => RE_MENCAO_ISS.test(pg.dob));
     if (!cobranca && !(nomeCobranca && mencionaIss)) continue;
     if (!mencionaIss) {
@@ -903,7 +921,16 @@ function analisarProcesso(nomePasta, arquivos) {
       continue;
     }
     const g = { arquivo: a.nome, pagina: pgs[0].pagina, pago: pgs.some(pg => RE_PAGO.test(pg.dob)), carne: pgs.some(pg => RE_CARNE.test(pg.dob)) || linhas.length > 1, valores: [], vencimentos: [] };
-    for (const l of linhas) if (l.valor) g.valores.push({ valor: r2(l.valor), rotulo: l.rotulo, origem: "linha digitável", fonte: l.fonte });
+    // O mesmo carnê/guia anexado de novo (outro arquivo, outra digitalização): cada parcela é contada uma vez só.
+    const repetidas = linhas.filter(l => codigosVistos.has(l.codigo)), novas = linhas.filter(l => !codigosVistos.has(l.codigo));
+    if (linhas.length && !novas.length) {
+      const orig = [...new Set(repetidas.map(l => codigosVistos.get(l.codigo)))].join("”, “");
+      avisa(`O arquivo “${a.nome}” repete ${g.carne ? "o carnê" : "a guia"} de ISS de “${orig}” (mesmas linhas digitáveis) e não foi contado de novo.`, repetidas[0].fonte);
+      continue;
+    }
+    if (repetidas.length) diz("info", `${repetidas.length} parcela(s) de “${a.nome}” já estavam em “${[...new Set(repetidas.map(l => codigosVistos.get(l.codigo)))].join("”, “")}” e não foram contadas de novo.`, repetidas[0].fonte);
+    for (const l of novas) codigosVistos.set(l.codigo, a.nome);
+    for (const l of novas) if (l.valor) g.valores.push({ valor: r2(l.valor), rotulo: l.rotulo, origem: "linha digitável", fonte: l.fonte });
     if (!g.valores.length) {
       for (const pg of pgs) {
         RE_VALOR_GUIA.lastIndex = 0; let m; const vs = [];
@@ -913,6 +940,11 @@ function analisarProcesso(nomePasta, arquivos) {
       }
     }
     for (const pg of pgs) { RE_VENC.lastIndex = 0; let m; while ((m = RE_VENC.exec(pg.dob))) if (!g.vencimentos.includes(m[1])) g.vencimentos.push(m[1]); }
+    // Sem linha digitável: a mesma guia é reconhecida pelo mesmo valor e vencimento.
+    if (!linhas.length && g.valores.length) {
+      const igual = guias.find(x => x.valores.length === 1 && x.valores[0].origem === "texto" && x.valores[0].valor === g.valores[0].valor && (x.vencimentos[0] || "") === (g.vencimentos[0] || ""));
+      if (igual) { avisa(`O arquivo “${a.nome}” repete a guia de ISS de “${igual.arquivo}” (mesmo valor e vencimento) e não foi contado de novo.`, g.valores[0].fonte); continue; }
+    }
     const fonteIss = (() => { for (const pg of pgs) { const m = RE_MENCAO_ISS.exec(pg.dob); if (m) return _fonte(pg, m.index, m.index + m[0].length); } return null; })();
     g.total = r2(g.valores.reduce((s, v) => s + v.valor, 0));
     guias.push(g);
@@ -2306,9 +2338,26 @@ function xmlParaTexto(xml, odt) {
   s = s.replace(/<[^>]+>/g, "");
   const t = document.createElement("textarea"); t.innerHTML = s; return t.value;
 }
-async function lerArquivo(f, progresso) {
+// Impressão digital do arquivo, para reconhecer o mesmo documento anexado mais de uma vez.
+async function hashArquivo(buf) {
+  try {
+    if (crypto.subtle) return [...new Uint8Array(await crypto.subtle.digest("SHA-256", buf))].map(b => b.toString(16).padStart(2, "0")).join("");
+  } catch (e) { /* segue com o cálculo simples */ }
+  const u = new Uint8Array(buf); let h = 0x811c9dc5, k = 0x9e3779b9;
+  for (let i = 0; i < u.length; i++) { h = Math.imul(h ^ u[i], 16777619); k = Math.imul(k ^ u[i], 2246822507); }
+  return `fnv-${(h >>> 0).toString(16)}-${(k >>> 0).toString(16)}-${u.length}`;
+}
+async function lerArquivo(f, progresso, jaLidos) {
   const nome = f.name, ext = extensao(nome);
   const r = { nome, situacao: "lido", paginas: [] };
+  try { r.hash = await hashArquivo(await f.arrayBuffer()); } catch (e) { /* sem hash: compara só pelo texto */ }
+  // Arquivo idêntico a outro da mesma pasta: reaproveita a leitura (evita repetir o OCR).
+  if (r.hash && jaLidos && jaLidos.has(r.hash)) return { ...jaLidos.get(r.hash), nome };
+  const lido = await lerConteudo(f, nome, ext, r, progresso);
+  if (r.hash && jaLidos) jaLidos.set(r.hash, lido);
+  return lido;
+}
+async function lerConteudo(f, nome, ext, r, progresso) {
   const ocrLigado = db.config.ocrPdf !== false, cobranca = pareceCobranca(nome);
   try {
     if (ext === "pdf") {
@@ -2394,9 +2443,9 @@ async function processarLote(files) {
     for (let i = 0; i < grupos.length; i++) {
       const g = grupos[i];
       estadoLote.msg = `Lendo ${i + 1} de ${grupos.length}: ${g.nome}…`; render();
-      const arquivos = [];
+      const arquivos = [], jaLidos = new Map();
       for (const f of g.arquivos.sort((a, b) => a.name.localeCompare(b.name, "pt-BR", { numeric: true })))
-        arquivos.push(await lerArquivo(f, msg => { estadoLote.msg = `Lendo ${i + 1} de ${grupos.length}: ${g.nome} — ${msg}…`; render(); }));
+        arquivos.push(await lerArquivo(f, msg => { estadoLote.msg = `Lendo ${i + 1} de ${grupos.length}: ${g.nome} — ${msg}…`; render(); }, jaLidos));
       const an = analisarProcesso(g.pasta, arquivos);
       textosLote.set(g.nome, arquivos);
       const item = { pasta: g.nome, semaforo: an.semaforo, alertas: an.alertas, avisos: an.avisos, narrativa: an.narrativa, dados: an.dados, arquivos: an.arquivos, guias: an.guias };
@@ -2479,7 +2528,7 @@ function cardLeitura(p) {
 }
 function docLeitura(p) {
   const l = p.leitura;
-  const arqs = l.arquivos.map(a => `<tr><td>${esc(a.nome)}</td><td>${{ lido: "Lido", escaneado: "Não lido (sem texto)", imagem: "Não lido (imagem)", nao_suportado: "Não lido", erro: "Erro" }[a.situacao] || a.situacao}${a.detalhe ? " — " + esc(a.detalhe) : ""}</td><td class="num">${a.paginas || ""}</td></tr>`).join("");
+  const arqs = l.arquivos.map(a => `<tr><td>${esc(a.nome)}</td><td>${{ lido: "Lido", escaneado: "Não lido (sem texto)", imagem: "Não lido (imagem)", nao_suportado: "Não lido", erro: "Erro", duplicado: "Ignorado (repetido)" }[a.situacao] || a.situacao}${a.detalhe ? " — " + esc(a.detalhe) : ""}</td><td class="num">${a.paginas || ""}</td></tr>`).join("");
   return `<div class="folha">${cabecalhoDoc(p)}<h2 class="titulo">Relatório de leitura automática</h2>
     <p>Pasta: <b>${esc(l.pasta)}</b> · Lido em ${new Date(l.em).toLocaleString("pt-BR")} · Resultado: <b>${SEMAFORO[l.semaforo].nome}</b></p>
     <h3>Arquivos</h3><table><thead><tr><th>Arquivo</th><th>Situação</th><th class="num">Páginas</th></tr></thead><tbody>${arqs}</tbody></table>

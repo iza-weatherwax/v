@@ -1,7 +1,7 @@
 // Gera a pasta exemplos/lote-exemplo com processos FICTÍCIOS para testar a leitura em lote.
 // Uso: node ferramentas/gerar-exemplos.mjs   (requer o Playwright com Chromium)
 import { chromium } from "playwright";
-import { mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdirSync, writeFileSync, rmSync, copyFileSync } from "node:fs";
 import { deflateRawSync, crc32 } from "node:zlib";
 
 const RAIZ = new URL("../exemplos/lote-exemplo/", import.meta.url).pathname;
@@ -138,6 +138,8 @@ const p8 = { nome: "RENATO ALVES DIAS", cpf: "529.982.247-25", cci: "93006" };
 await pdf(d + "habite-se.pdf", habite({ ...p8, end: "Rua dos Ipês, 12 - Centro", areas: ["Área construída: 182,50 m²"] }));
 await pdf(d + "carne.pdf", cobranca({ titulo: "CARNÊ — IMPOSTO SOBRE SERVIÇOS", tributo: "ISS — Construção civil", parcelas: [
   ["Parcela 1/3", "10/11/2026", 1500], ["Parcela 2/3", "10/12/2026", 1500], ["Parcela 3/3", "10/01/2027", 1500]] }));
+// O contribuinte anexou o mesmo carnê duas vezes: não pode ser contado em dobro.
+copyFileSync(d + "carne.pdf", d + "carne (1).pdf");
 
 // 9) Guia de ISS sem texto (letras como imagem, como no "Microsoft Print to PDF"): lida por OCR
 d = pasta("2200-2026");
@@ -168,5 +170,5 @@ await pg.pdf({ path: d + "DAM_ISSQN.pdf", format: "A4" });
 
 await b.close();
 writeFileSync(RAIZ + "LEIA-ME.txt", "Processos FICTÍCIOS para testar a leitura em lote do assistente.\n" +
-  "1500-2026: simples (com boleto de taxa, só aviso) | 3057-2026: demolição (Word) | 1600-2026: com nota fiscal (pulado) | 1700-2026: atenção | 1800-2026: ampliação (um único PDF) | 1900-2026: já tem guia de ISS | 2000-2026: duas casas (cálculo por unidade) | 2100-2026: carnê de ISS que não fecha | 2200-2026: guia de ISS sem texto (lida por OCR).\n");
+  "1500-2026: simples (com boleto de taxa, só aviso) | 3057-2026: demolição (Word) | 1600-2026: com nota fiscal (pulado) | 1700-2026: atenção | 1800-2026: ampliação (um único PDF) | 1900-2026: já tem guia de ISS | 2000-2026: duas casas (cálculo por unidade) | 2100-2026: carnê de ISS que não fecha (anexado duas vezes) | 2200-2026: guia de ISS sem texto (lida por OCR).\n");
 console.log("Exemplos gerados em", RAIZ);
