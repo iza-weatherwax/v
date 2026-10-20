@@ -1,0 +1,2 @@
+Processos FICTÍCIOS para testar a leitura em lote do assistente.
+1500-2026: simples (com boleto de taxa, só aviso) | 3057-2026: demolição (Word) | 1600-2026: com nota fiscal (pulado) | 1700-2026: atenção | 1800-2026: ampliação (um único PDF) | 1900-2026: já tem guia de ISS | 2000-2026: duas casas (cálculo por unidade) | 2100-2026: carnê de ISS que não fecha | 2200-2026: guia de ISS sem texto (lida por OCR).
