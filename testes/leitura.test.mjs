@@ -56,7 +56,7 @@ test("utilitários: dobrar, parseArea, nome e endereço", () => {
   assert.equal(nomeValido("Certidão válida até"), false);
   assert.equal(nomeValido("Prefeitura Municipal"), false);
   assert.equal(nomeValido("RUA DAS FLORES"), false);
-  assert.equal(enderecosIguais("1067 - RUA BENJAMIM ALVES (R. QUINZE - PARQUE DOS VERDES) Número", "RUA BENJAMIM ALVES (R. QUINZE."), true);
+  assert.equal(enderecosIguais("1234 - RUA DAS PALMEIRAS (R. DEZ - JARDIM DAS FLORES) Número", "RUA DAS PALMEIRAS (R. DEZ."), true);
   assert.equal(enderecosIguais("Rua A, 10", "Rua B, 10"), false);
   assert.equal(enderecosIguais("Rua das Flores, 77", "Rua das Flores, 87"), false);
   assert.equal(enderecosIguais("Rua das Flores, 100 - Jardim Central", "100 - RUA DAS FLORES (R. DOZE - JARDIM CENTRAL)"), true);
