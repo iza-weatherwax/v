@@ -734,7 +734,7 @@ function _tipoArea(q) {
 const RE_PROCESSO = /\bprocesso\b(?:\s+administrativo)?(?:\s+n[o°º.]*|\s+numero)?\s*[:\-]?\s*(\d{1,7})\s*[\/\-]\s*((?:19|20)\d{2})(?!\d)/g;
 const RE_PROCESSO_NOME = /(?:^|[^\d])(\d{1,7})\s*[\/\-_. ]\s*((?:19|20)\d{2})(?!\d)/;
 // Nome depois do rótulo, na mesma linha ou na linha seguinte.
-const RE_NOME_1 = /\b(?:nome do requerente|nome do proprietario|nome do interessado|requerente|proprietari[oa]s?|interessad[oa]|contribuinte|titular)\b(?:\s*\(a\))?[ \t]*[:\-][ \t]*(?:\n[ \t]*)?([^\n]{3,140})/g;
+const RE_NOME_1 = /\b(?:nome do requerente|nome do proprietario|nome do interessado|requerente|proprietari[oa]s?|interessad[oa]|contribuinte|titular|concedid[oa] a|em favor de|outorgad[oa] a)\b(?:\s*\(a\))?[ \t]*[:\-][ \t]*(?:\n[ \t]*)?([^\n]{3,140})/g;
 const RE_NOME_2 = /\beu,?\s+([a-z][a-z' .\-]{4,90}?)\s*,\s*(?:brasileir|portador|inscrit|residente|cpf|rg\b|casad|solteir|viuv|divorciad)/g;
 const RE_NOME_3 = /(?:^|\n)[ \t]*(?:nome do proprietario|proprietari[oa]s?|requerente|interessad[oa])(?:\s*\(a\))?[ \t]*\n[ \t]*([^\n]{5,100})/g;
 const RE_FIM_NOME = /\s(?:cpf|cnpj|rg|cci|inscricao|endereco|residente|domiciliad|bairro|cep|telefone|fone|celular|e-?mail|area|processo|data|nacionalidade|brasileir|portador|estado civil|profissao|natural)\b|[;|]|\s{2,}/;
@@ -751,11 +751,11 @@ function nomeValido(nome) {
 }
 const RE_CNPJ = /(?<![\d.\/-])\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2}(?!\d)/g;
 const RE_CPF = /(?<![\d.\/-])\d{3}\.?\d{3}\.?\d{3}-?\d{2}(?!\d)/g;
-const RE_CTX_POS = /requerente|proprietari|interessad|contribuinte|titular|adquirente|\beu,/g;
+const RE_CTX_POS = /requerente|proprietari|interessad|contribuinte|titular|adquirente|concedid[oa] a|em favor de|outorgad[oa] a|\beu,/g;
 const RE_CTX_NEG = /responsavel tecnico|resp\. tecnico|tecnico responsavel|engenheir|arquitet|\bcrea\b|\bcau\b|projetista|autor do projeto/g;
 // Só o rótulo CCI (ou código/cadastro imobiliário); "inscrição imobiliária/cadastral" é outro código.
 const RE_CCI = /\b(?:c\.? ?c\.? ?i\b\.?|codigo cadastral(?: imobiliario)?|cadastro imobiliario)\s*(?:n[o°º.]*\s*)?[:\-]?\s*(\d{1,3}(?:\.\d{3})+|\d{3,9})(?![\d.\/-]*\d)/g;
-const RE_END_FORTE = /\b(?:endereco da obra|endereco do imovel|local da obra|localizacao da obra|localizacao do imovel|local do imovel|localizacao)[ \t]*[:\-][ \t]*(?:\n[ \t]*)?([^\n]{5,160})/g;
+const RE_END_FORTE = /\b(?:endereco da obra|endereco do imovel|endereco da construcao|local da obra|local da construcao|localizacao da obra|localizacao da construcao|localizacao do imovel|local do imovel|local do empreendimento|localizacao)[ \t]*[:\-][ \t]*(?:\n[ \t]*)?([^\n]{5,160})/g;
 const RE_END_SITUADO = /\b(?:imovel|obra|edificacao|construcao)\s+(?:situad[oa]|localizad[oa])\s+(?:a|na|no|em)\s+([^\n]{5,160})/g;
 const RE_END_FRACO = /\b(?:endereco|logradouro)[ \t]*[:\-][ \t]*(?:\n[ \t]*)?([^\n]{5,160})/g;
 const RE_FIM_END = /\s(?:cpf|cnpj|cci|inscricao|telefone|fone|celular|e-?mail|area|processo|requerente|proprietari|responsavel|para fins|com area)\b|\s{2,}|[|;]/;
@@ -998,6 +998,15 @@ function analisarProcesso(nomePasta, arquivos) {
     const ini = _posGrupo(m, 1);
     const orig = pg.texto.slice(ini, ini + m[1].length);
     let v = _cortar(orig, dobrar(orig), RE_FIM_END);
+    // Endereço que continua na linha de baixo (ex.: "... BAIRRO PARQUE" / "DOS VERDES"), quando ela não é outro campo.
+    if (v.length >= orig.trim().length - 1 && !/[.;]$/.test(v)) {
+      const fimLinha = ini + m[1].length;
+      if (pg.texto[fimLinha] === "\n") {
+        const prox = pg.texto.slice(fimLinha + 1).split("\n")[0].trim();
+        if (prox && prox.length <= 60 && !prox.includes(":") && !/^(?:area|projeto|caracter|rt\b|autor|cpf|cnpj|cci|processo|restric|observ|proprietari|requerente|concedid)/.test(dobrar(prox)))
+          v = v + " " + prox;
+      }
+    }
     for (let k = 0; k < 3; k++) { const mm = RE_ROTULO_FINAL.exec(dobrar(v)); if (!mm) break; v = v.slice(0, mm.index).replace(/[\s,;:\-–]+$/, ""); }
     if (v.length < 5 || !/[a-z]{3}/i.test(v)) return;
     cEnd.push({ valor: v.replace(/\s+/g, " "), peso: forte ? 2 : 1, forte, longo: true, origem: pg.origem, fonte: _fonte(pg, ini, ini + v.length) });
@@ -1074,8 +1083,24 @@ function analisarProcesso(nomePasta, arquivos) {
     const pr = cProc.filter(c => c.origem === "principal" && c.chave !== dados.processo);
     if (pr.length && !cProc.some(c => c.origem === "principal" && c.chave === dados.processo))
       alerta(`O Alvará de Habite-se menciona o processo ${pr[0].valor}, diferente do nome da pasta (${dados.processo}). Usei ${dados.processo}; confirme.`, pr[0].fonte);
+  } else if (/\d/.test(nomePasta || "")) {
+    // Pasta só com o número (ex.: "5555"): o processo é esse número; o ano da tabela vem dos documentos.
+    const num = String(Number(/\d{1,7}/.exec(nomePasta)[0]));
+    dados.processo = num;
+    diz("ok", `Número do processo: ${num} (nome da pasta).`, { arquivo: "(nome da pasta)", pagina: 0, trecho: nomePasta });
+    const selAno = _selecionar(cProc.filter(c => c.chave.split("/")[0] === num), undefined, ["principal", "outro", "construcao"]);
+    if (selAno) {
+      dados.anoManual = selAno.escolhido.valor.split("/")[1];
+      diz("ok", `Ano de referência da tabela: ${dados.anoManual} (o processo aparece como ${selAno.escolhido.valor} nos documentos).`, selAno.escolhido.fontes[0]);
+    } else {
+      dados.anoManual = String(new Date().getFullYear());
+      alerta(`Não encontrei o ano do processo ${num} nos documentos; usei ${dados.anoManual} como ano de referência da tabela. Confirme.`);
+    }
+    const pr = cProc.filter(c => c.origem === "principal" && c.chave.split("/")[0] !== num);
+    if (pr.length && !cProc.some(c => c.origem === "principal" && c.chave.split("/")[0] === num))
+      alerta(`O Alvará de Habite-se menciona o processo ${pr[0].valor}, diferente do nome da pasta (${num}). Usei ${num}; confirme.`, pr[0].fonte);
   } else if (selProc) { dados.processo = selProc.escolhido.valor; relatar("Número do processo", selProc); }
-  else faltando.push("número do processo (com o ano)");
+  else faltando.push("número do processo (no nome da pasta)");
 
   const selNome = _selecionar(cNome);
   if (selNome) { dados.requerente = selNome.escolhido.valor; relatar("Requerente", selNome); } else faltando.push("nome do requerente");
@@ -2404,7 +2429,7 @@ function agruparArquivos(files) {
 
 function criarDeLeitura(an, pasta, forcado) {
   const p = novoProcesso();
-  for (const k of ["processo", "requerente", "documento", "cci", "endereco", "area", "unidades", "tipoObra", "categoria"]) if (an.dados[k] !== undefined) p[k] = an.dados[k];
+  for (const k of ["processo", "anoManual", "requerente", "documento", "cci", "endereco", "area", "unidades", "tipoObra", "categoria"]) if (an.dados[k] !== undefined) p[k] = an.dados[k];
   p.temMaoDeObra = forcado ? null : (an.dados.temMaoDeObra === undefined ? null : an.dados.temMaoDeObra);
   const alertas = an.alertas.slice();
   const narrativa = an.narrativa.slice(0, -1), conclusao = an.narrativa[an.narrativa.length - 1];

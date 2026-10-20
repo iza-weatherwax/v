@@ -37,7 +37,8 @@ Para os casos calculados **somente pela área** (sem notas fiscais nem folha de 
 2. No assistente, abra **Leitura em lote → Escolher pasta dos processos…**.
 3. O programa lê PDFs com texto, Word (.docx), .odt e .txt e encontra: nº do processo, requerente, CPF/CNPJ (confere os dígitos), CCI, endereço da obra, área construída e tipo de obra (construção ou demolição).
    - **Fonte principal:** o **Alvará de Habite-se e Baixa de Construção**. Os dados dele são **comparados com o Alvará de Construção**; valores de outros documentos (certidões, requerimento etc.) só são usados se o dado não estiver nos alvarás e não geram divergência. Sem o habite-se, o processo fica 🟡.
-   - O nº do processo vem do nome da pasta (o Alvará de Construção costuma ser de outro processo, mais antigo).
+   - O **nº do processo vem do nome da pasta**: uma pasta `5555` é o processo 5555 (também vale `5555-2026`). O ano de referência da tabela vem do nome da pasta ou dos documentos (ex.: “Nº DO PROCESSO: 5555/2026”); se não aparecer, usa o ano atual e avisa para conferir. O Alvará de Construção costuma ser de outro processo, mais antigo, e não interfere.
+   - Reconhece o formato dos alvarás da prefeitura: requerente em “Concedido a: …” (com CPF/CNPJ) e endereço em “Local da construção: …”, inclusive quando continua na linha de baixo.
    - CCI: só o que vem rotulado como CCI (a “inscrição imobiliária/cadastral” é outro código). Endereços escritos de formas diferentes são reconhecidos como o mesmo.
 4. Cada processo recebe uma situação:
    - 🟢 **Simples** — tudo encontrado e coerente: o rascunho é criado com memória e decisão prontas; o fiscal só confere e conclui.

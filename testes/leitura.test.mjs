@@ -158,7 +158,7 @@ test("várias unidades a averbar no habite-se: cálculo por unidade", () => {
 test("dados faltando e CPF inválido", () => {
   const r = analisarProcesso("pasta sem numero", [pdf("r.pdf", "ALVARÁ DE HABITE-SE\nProprietário: JOSÉ DA SILVA\nCPF: 123.456.789-00")]);
   assert.equal(r.semaforo, "amarelo");
-  assert.deepEqual([...r.faltando], ["número do processo (com o ano)", "CPF/CNPJ válido do requerente", "CCI", "endereço da obra", "área construída"]);
+  assert.deepEqual([...r.faltando], ["número do processo (no nome da pasta)", "CPF/CNPJ válido do requerente", "CCI", "endereço da obra", "área construída"]);
   assert.ok(r.alertas.some(a => /dígitos verificadores inválidos/.test(a)));
 });
 
@@ -306,4 +306,46 @@ test("o tipo do imposto: ISS sozinho, ISSQN, I.S.S. e imposto sobre serviços", 
   const M3 = vm.createContext({}); vm.runInContext(bloco("motor") + bloco("leitura") + ";this.re=RE_MENCAO_ISS;", M3);
   for (const t of ["carne de iss", "tributo: issqn", "i.s.s. construcao", "imposto sobre servicos"]) assert.ok(M3.re.test(t), t);
   for (const t of ["comissao", "permissao", "taxa de licenca"]) assert.ok(!M3.re.test(t), t);
+});
+
+test("formato do alvará da prefeitura: 'Concedido a' e 'Local da construção' em duas linhas", () => {
+  const formato = titulo => `Prefeitura Municipal de Araguari
+Estado de Minas Gerais
+${titulo}
+Nº DO ALVARÁ: 0999/2025 Nº DO PROCESSO: 1234/2025
+O PREFEITO MUNICIPAL, USANDO DE SUAS ATRIBUIÇÕES RESOLVE CONCEDER LICENÇA PARA
+CONSTRUÇÃO CONFORME ABAIXO DESCRITO.
+CONCEDIDO A: EXEMPLO INCORPORACOES LTDA - CNPJ: 11.222.333/0001-81
+CARACTERÍSTICAS:
+Local da construção: RUA DAS FLORES - Nº 100 - LOTE X-1 - QUADRA 5 - BAIRRO PARQUE
+DOS IPES
+Área total do terreno: 160,00 m²
+Área a construir: 69,99 m²
+PROJETO:
+RT pela Obra:FULANO DE TAL
+Autor do Projeto: FULANO DE TAL
+Mariel Exemplo da Silva
+Secretária de Planejamento`;
+  const r = analisarProcesso("1234-2025", [pdf("habite.pdf", formato("ALVARÁ DE HABITE-SE E BAIXA DE CONSTRUÇÃO RESIDENCIAL")), pdf("alvara.pdf", formato("ALVARÁ DE LICENÇA PARA CONSTRUÇÃO RESIDENCIAL"))]);
+  assert.equal(r.dados.requerente, "EXEMPLO INCORPORACOES LTDA");
+  assert.equal(r.dados.documento, "11.222.333/0001-81");
+  assert.equal(r.dados.endereco, "RUA DAS FLORES - Nº 100 - LOTE X-1 - QUADRA 5 - BAIRRO PARQUE DOS IPES");
+  assert.equal(r.dados.area, 69.99);
+  assert.ok(r.narrativa.some(n => /Requerente confere com o Alvará de Construção/.test(n.msg)));
+});
+
+test("número do processo só pelo nome da pasta (ex.: 5555) e ano pelos documentos", () => {
+  let r = analisarProcesso("5555", [pdf("habite.pdf", HABITE + "\nNº DO PROCESSO: 5555/2026")]);
+  assert.equal(r.dados.processo, "5555");
+  assert.equal(r.dados.anoManual, "2026");
+  assert.ok(!r.alertas.some(a => /ano do processo/.test(a)), r.alertas.join(" | "));
+  // sem o ano nos documentos: usa o ano atual e avisa
+  r = analisarProcesso("5555", [pdf("habite.pdf", HABITE)]);
+  assert.equal(r.dados.processo, "5555");
+  assert.equal(r.dados.anoManual, String(new Date().getFullYear()));
+  assert.ok(r.alertas.some(a => /Não encontrei o ano do processo 5555/.test(a)));
+  // o processo do alvará de construção (outro número) não muda nada
+  r = analisarProcesso("5555", [pdf("habite.pdf", HABITE + "\nProcesso nº 5555/2025"), pdf("alvara.pdf", ALVARA)]);
+  assert.equal(r.dados.processo, "5555");
+  assert.equal(r.dados.anoManual, "2025");
 });
