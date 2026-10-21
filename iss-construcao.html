@@ -2338,8 +2338,6 @@ async function ocrCanvas(cv) {
 }
 // Canvas branco com no máximo `max` pixels no maior lado.
 function _canvas(l, a) { const c = document.createElement("canvas"); c.width = Math.round(l); c.height = Math.round(a); const x = c.getContext("2d"); x.fillStyle = "#fff"; x.fillRect(0, 0, c.width, c.height); return c; }
-// O OCR só é usado em PDFs sem texto que pareçam guia/carnê de ISS. Sem texto, a pista é o nome do arquivo.
-const pareceCobranca = nome => RE_NOME_COBRANCA.test(dobrar(nome).replace(/\.[a-z0-9]+$/, ""));
 const _temTexto = t => String(t || "").replace(/\s/g, "").length >= 15;
 // Lê o texto de cada página; páginas sem texto passam pelo OCR (se ligado).
 async function lerPDF(buf, opcoes = {}) {
@@ -2422,18 +2420,16 @@ async function lerArquivo(f, progresso, jaLidos) {
   return lido;
 }
 async function lerConteudo(f, nome, ext, r, progresso) {
-  const ocrLigado = db.config.ocrPdf !== false, cobranca = pareceCobranca(nome);
+  const ocrLigado = db.config.ocrPdf !== false;
   try {
     if (ext === "pdf") {
-      const lido = await lerPDF(await f.arrayBuffer(), { ocr: ocrLigado && cobranca, progresso: (i, n) => progresso && progresso(`reconhecendo texto (OCR) de “${nome}”, página ${i} de ${n}`) });
+      const lido = await lerPDF(await f.arrayBuffer(), { ocr: ocrLigado, progresso: (i, n) => progresso && progresso(`reconhecendo texto (OCR) de “${nome}”, página ${i} de ${n}`) });
       r.paginas = lido.paginas;
       if (lido.paginasOcr.length) r.paginasOcr = lido.paginasOcr;
       const comTexto = r.paginas.filter(_temTexto).length;
       if (!comTexto) {
         r.situacao = "escaneado"; r.paginas = [];
-        r.detalhe = lido.erroOcr ? `o OCR falhou (${lido.erroOcr})`
-          : !cobranca ? "o OCR só é usado em guias/carnês de ISS, identificados pelo nome do arquivo"
-          : ocrLigado ? "nem o OCR encontrou texto" : "o OCR está desligado";
+        r.detalhe = lido.erroOcr ? `o OCR falhou (${lido.erroOcr})` : ocrLigado ? "nem o OCR encontrou texto" : "o OCR está desligado";
       }
       else if (comTexto < r.paginas.length) r.paginasSemTexto = r.paginas.length - comTexto;
     } else if (ext === "docx") r.paginas = [xmlParaTexto(await textoDoZip(await f.arrayBuffer(), "word/document.xml"), false)];
@@ -2559,7 +2555,7 @@ function vistaLote() {
         <details><summary>O que o programa fez</summary>${narrativaHTML(it.narrativa)}</details>${detalhesTexto(it.pasta)}</td></tr>`;
   }).join("");
   return `<div class="card"><h2>Leitura em lote</h2>
-    <p style="margin-top:0">Escolha a pasta onde estão os processos baixados. <b>Cada pasta é um processo diferente</b>: todos os arquivos de uma mesma pasta são lidos juntos. Se escolher a pasta de um único processo, ela mesma é o processo. O programa lê PDFs com texto, .docx, .odt e .txt; imagens e PDFs escaneados ficam registrados como não lidos.</p>
+    <p style="margin-top:0">Escolha a pasta onde estão os processos baixados. <b>Cada pasta é um processo diferente</b>: todos os arquivos de uma mesma pasta são lidos juntos. Se escolher a pasta de um único processo, ela mesma é o processo. O programa lê PDFs, .docx, .odt e .txt; PDFs sem texto (escaneados) são lidos por OCR e imagens ficam registradas como não lidas.</p>
     <ul class="muted" style="margin-top:0">
       <li>🟢 <b>Simples:</b> todos os dados encontrados e coerentes. Memória e decisão já ficam prontas; o fiscal confere e conclui.</li>
       <li>🟡 <b>Atenção:</b> dado faltando, divergente ou arquivo não lido. O rascunho é criado com os alertas.</li>
@@ -2568,7 +2564,7 @@ function vistaLote() {
     <p class="muted">Tudo é feito neste computador; nenhum arquivo é enviado para a internet. Nenhum processo é concluído automaticamente.</p>
     ${estadoLote.rodando ? `<div class="aviso info">${esc(estadoLote.msg)}</div>`
       : `<div class="opcoes" style="flex-direction:column;gap:4px;margin:0 0 10px">
-          <label><input type="checkbox" data-cfg-bool="ocrPdf" ${db.config.ocrPdf !== false ? "checked" : ""}> Ler por reconhecimento de imagem (OCR) as guias e carnês de ISS em PDF sem texto — só arquivos com ISS, ISSQN, DAM, guia, boleto ou carnê no nome (alguns segundos por página)</label></div>
+          <label><input type="checkbox" data-cfg-bool="ocrPdf" ${db.config.ocrPdf !== false ? "checked" : ""}> Ler por reconhecimento de imagem (OCR) os PDFs sem texto (escaneados ou com letras desenhadas) — alguns segundos por página</label></div>
         <label class="btn pri" style="display:inline-block">Escolher pasta dos processos…<input type="file" id="pastaLote" webkitdirectory directory multiple hidden></label>`}
   </div>
   ${lote ? `<div class="card"><div class="acoes" style="justify-content:space-between;margin-bottom:8px">
