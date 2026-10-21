@@ -15,13 +15,14 @@ const requerimento = ({ proc, nome, cpf, cci, end, rotuloEnd = "Endereço da obr
   <p>Processo nº ${proc}</p><p>Requerente: ${nome}</p><p>CPF: ${cpf}</p><p>CCI: ${cci}</p>
   <p>${rotuloEnd}: ${end}</p><p>Vem requerer a expedição do habite-se do imóvel acima identificado.</p>${extra}
   <p>Araguari, 10 de outubro de 2026.</p>`);
-// Alvará de Habite-se e Baixa de Construção: o documento principal.
-const habite = ({ titulo = "ALVARÁ DE HABITE-SE E BAIXA DE CONSTRUÇÃO RESIDENCIAL", nome, cpf, cci, end, areas }) => pagina(`
+// Alvará de Habite-se e Baixa de Construção: o documento principal. A data dele é a conclusão da obra (fato gerador).
+const habite = ({ titulo = "ALVARÁ DE HABITE-SE E BAIXA DE CONSTRUÇÃO RESIDENCIAL", nome, cpf, cci, end, areas, data = "16 de outubro de 2026" }) => pagina(`
   <h3 style="text-align:center">${titulo}</h3>
   <p>Proprietário: ${nome}</p><p>CPF: ${cpf}</p><p>CCI: ${cci}</p><p>Endereço: ${end}</p>
   ${areas.map(a => `<p>${a}</p>`).join("")}
   <p>Responsável técnico: Carlos Exemplo Engenheiro — CREA-MG 000000 — CPF 987.654.321-00</p>
-  <p>Certidão válida até 31/12/2026.</p>`);
+  <p>Certidão válida até 31/12/2026.</p>
+  <p>Araguari, ${data}.</p>`);
 // Alvará de Construção: usado para comparação (costuma ser de outro processo, mais antigo).
 const alvara = ({ titulo = "ALVARÁ DE CONSTRUÇÃO", nome, cpf = "", cci = "", end = "", areas }) => pagina(`
   <h3 style="text-align:center">${titulo} Nº 512/2024</h3>
@@ -168,7 +169,13 @@ await pgImg.close();
 await pg.setContent(`<img src="data:image/png;base64,${png.toString("base64")}" style="width:100%">`);
 await pg.pdf({ path: d + "DAM_ISSQN.pdf", format: "A4" });
 
+// 10) Alvará de Legalização: construção antiga, o ISS provavelmente decaiu (decadência marcada para análise)
+d = pasta("2300-2026");
+const p10 = { nome: "HELENA CASTRO MOREIRA", cpf: "529.982.247-25", cci: "73015" };
+await pdf(d + "requerimento.pdf", requerimento({ proc: "2300/2026", ...p10, end: "Rua dos Jatobás, 210 - Vila Antiga" }));
+await pdf(d + "alvara-legalizacao.pdf", habite({ titulo: "ALVARÁ DE LEGALIZAÇÃO RESIDENCIAL UNIFAMILIAR", ...p10, end: "Rua dos Jatobás, 210 - Vila Antiga", areas: ["Área a legalizar: 135,00 m²"] }));
+
 await b.close();
 writeFileSync(RAIZ + "LEIA-ME.txt", "Processos FICTÍCIOS para testar a leitura em lote do assistente.\n" +
-  "1500-2026: simples (com boleto de taxa, só aviso) | 3057-2026: demolição (Word) | 1600-2026: com nota fiscal (pulado) | 1700-2026: atenção | 1800-2026: ampliação (um único PDF) | 1900-2026: já tem guia de ISS | 2000-2026: duas casas (cálculo por unidade) | 2100-2026: carnê de ISS que não fecha (anexado duas vezes) | 2200-2026: guia de ISS sem texto (lida por OCR).\n");
+  "1500-2026: simples (com boleto de taxa, só aviso) | 3057-2026: demolição (Word) | 1600-2026: com nota fiscal (pulado) | 1700-2026: atenção | 1800-2026: ampliação (um único PDF) | 1900-2026: já tem guia de ISS | 2000-2026: duas casas (cálculo por unidade) | 2100-2026: carnê de ISS que não fecha (anexado duas vezes) | 2200-2026: guia de ISS sem texto (lida por OCR) | 2300-2026: Alvará de Legalização (construção antiga: decadência).\n");
 console.log("Exemplos gerados em", RAIZ);

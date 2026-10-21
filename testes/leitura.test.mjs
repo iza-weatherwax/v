@@ -9,8 +9,8 @@ const html = readFileSync(new URL("../iss-construcao.html", import.meta.url), "u
 const bloco = id => html.match(new RegExp(`<script id="${id}">([\\s\\S]*?)<\\/script>`))[1];
 const M = vm.createContext({});
 vm.runInContext(bloco("motor") + "\n" + bloco("leitura") +
-  "\n;this.api={analisarProcesso,dobrar,parseArea,nomeValido,enderecosIguais,lerLinhaDigitavel,compararGuiaComIss,compararGuiasComIss,_mod10};", M);
-const { analisarProcesso, dobrar, parseArea, nomeValido, enderecosIguais, lerLinhaDigitavel, compararGuiaComIss, compararGuiasComIss, _mod10 } = M.api;
+  "\n;this.api={analisarProcesso,dobrar,parseArea,nomeValido,enderecosIguais,lerLinhaDigitavel,compararGuiaComIss,compararGuiasComIss,_mod10,datasAssinaturaPDF};", M);
+const { analisarProcesso, dobrar, parseArea, nomeValido, enderecosIguais, lerLinhaDigitavel, compararGuiaComIss, compararGuiasComIss, _mod10, datasAssinaturaPDF } = M.api;
 const pdf = (nome, ...paginas) => ({ nome, situacao: "lido", paginas });
 
 const HABITE = `PREFEITURA MUNICIPAL DE ARAGUARI
@@ -178,8 +178,9 @@ Autenticação mecânica
 ${linhaArrecadacao(250)}`;
   const r = analisarProcesso("1500-2026", [pdf("habite-se.pdf", HABITE), pdf("Boleto Alvara Construção.pdf", boleto)]);
   assert.equal(r.guias.length, 0);
-  assert.equal(r.avisos.length, 1);
-  assert.match(r.avisos[0], /não indica ISS/);
+  const avisosBoleto = r.avisos.filter(a => /Boleto/.test(a));
+  assert.equal(avisosBoleto.length, 1);
+  assert.match(avisosBoleto[0], /não indica ISS/);
   assert.equal(r.semaforo, "verde", r.alertas.join(" | "));
 });
 
@@ -348,4 +349,87 @@ test("número do processo só pelo nome da pasta (ex.: 5555) e ano pelos documen
   r = analisarProcesso("5555", [pdf("habite.pdf", HABITE + "\nProcesso nº 5555/2025"), pdf("alvara.pdf", ALVARA)]);
   assert.equal(r.dados.processo, "5555");
   assert.equal(r.dados.anoManual, "2025");
+});
+
+// Datas do ano passado: sempre no passado e a menos de 5 anos (o resultado não muda com o passar do tempo).
+const ANO = new Date().getFullYear() - 1;
+const ALVARA_PREF = titulo => `Prefeitura Municipal de Araguari
+Estado de Minas Gerais
+${titulo}
+Nº DO ALVARÁ: 0999/${ANO} Nº DO PROCESSO: 1234/${ANO}
+CONCEDIDO A: EXEMPLO INCORPORACOES LTDA - CNPJ: 11.222.333/0001-81
+Local da construção: RUA DAS FLORES - Nº 100 - BAIRRO PARQUE
+Área total construída: 69,99 m²
+Mariel Exemplo da Silva
+Secretária de Planejamento`;
+
+test("habite-se: a data do alvará é a conclusão da obra (fato gerador)", () => {
+  let r = analisarProcesso("1500-2026", [pdf("habite-se.pdf", HABITE + `\nAraguari, 1º de janeiro de ${ANO}.`)]);
+  assert.equal(r.dados.fimObra, `${ANO}-01-01`);
+  assert.equal(r.dados.decAnalisar, undefined);
+  assert.equal(r.semaforo, "verde", r.alertas.join(" | "));
+  assert.ok(r.narrativa.some(n => /Conclusão da obra \(fato gerador\): 01\/01\/\d{4} — data do Alvará de Habite-se \(não encontrei assinatura digital\)/.test(n.msg)));
+  r = analisarProcesso("1500-2026", [pdf("habite-se.pdf", HABITE + `\nData de emissão: 02/01/${ANO}\nCertidão válida até 31/12/2099`)]);
+  assert.equal(r.dados.fimObra, `${ANO}-01-02`);
+  // sem data: só um aviso, o caso continua simples
+  r = analisarProcesso("1500-2026", [pdf("habite-se.pdf", HABITE)]);
+  assert.equal(r.dados.fimObra, undefined);
+  assert.ok(r.avisos.some(a => /Não encontrei a data do Alvará de Habite-se/.test(a)));
+  assert.equal(r.semaforo, "verde");
+});
+
+test("habite-se: a data da assinatura digital tem preferência sobre a do alvará", () => {
+  // assinatura estampada na página (a mais recente vale); a data de uma norma citada não conta
+  const t = HABITE + `\nAraguari, 1º de janeiro de ${ANO}.\nDocumento assinado eletronicamente conforme o Decreto nº 1.234, de 15/04/2019.
+Documento assinado digitalmente por MARIEL EXEMPLO DA SILVA em 02/01/${ANO} às 10:15
+Assinado de forma digital por FULANO DE TAL:12345678909 Dados: ${ANO}.01.03 11:20:00 -03'00'`;
+  let r = analisarProcesso("1500-2026", [pdf("habite-se.pdf", t)]);
+  assert.equal(r.dados.fimObra, `${ANO}-01-03`);
+  assert.ok(r.narrativa.some(n => /data da assinatura digital do Alvará de Habite-se \(a mais recente; há também 02\/01\//.test(n.msg)), JSON.stringify(r.narrativa.map(n => n.msg)));
+  // assinatura digital do PDF (fora do texto da página)
+  const hab = { ...pdf("habite-se.pdf", HABITE + `\nAraguari, 1º de janeiro de ${ANO}.`), assinaturas: [`${ANO}-01-04`] };
+  r = analisarProcesso("1500-2026", [hab]);
+  assert.equal(r.dados.fimObra, `${ANO}-01-04`);
+  // a norma citada antes da data da assinatura não a invalida
+  r = analisarProcesso("1500-2026", [pdf("habite-se.pdf", HABITE + `\nAssinado digitalmente conforme MP nº 2.200-2/2001, em 05/01/${ANO}.`)]);
+  assert.equal(r.dados.fimObra, `${ANO}-01-05`);
+  // num arquivo que reúne vários documentos, a assinatura do arquivo não é atribuída ao habite-se
+  r = analisarProcesso("1500-2026", [{ ...pdf("processo.pdf", REQ, HABITE + `\nAraguari, 1º de janeiro de ${ANO}.`), assinaturas: [`${ANO}-01-04`] }]);
+  assert.equal(r.dados.fimObra, `${ANO}-01-01`);
+});
+
+test("datas das assinaturas digitais no PDF (dicionário de assinatura)", () => {
+  const txt = `%PDF-1.7\n1 0 obj\n<</Type/Annot/Subtype/Text/M(D:20200101000000)>>\nendobj\n7 0 obj\n<</Type/Sig/Filter/Adobe.PPKLite/ByteRange [0 120 400 80]/Contents <3082ab00>/M(D:20260315103245-03'00')/Name(FULANO)>>\nendobj\n` +
+    `9 0 obj\n<</Type /Sig /ByteRange [0 1 2 3] /M (D:20260316090000Z)>>\nendobj\n`;
+  assert.deepEqual([...datasAssinaturaPDF(new TextEncoder().encode(txt))], ["2026-03-15", "2026-03-16"]);
+  assert.deepEqual([...datasAssinaturaPDF(new TextEncoder().encode("%PDF-1.4 sem assinatura /M(D:20200101)"))], []);
+});
+
+test("habite-se antigo: decadência marcada para análise", () => {
+  const r = analisarProcesso("1500-2026", [pdf("habite-se.pdf", HABITE + "\nAraguari, 10 de janeiro de 2019.")]);
+  assert.equal(r.dados.fimObra, "2019-01-10");
+  assert.equal(r.dados.decAnalisar, true);
+  assert.equal(r.semaforo, "amarelo");
+  assert.ok(r.alertas.some(a => /prazo para lançar o ISS terminou em 31\/12\/2024/.test(a)), r.alertas.join(" | "));
+});
+
+test("Alvará de Legalização: construção antiga, decadência marcada e sem data de conclusão", () => {
+  let r = analisarProcesso("1234-2026", [pdf("legalizacao.pdf", ALVARA_PREF("ALVARÁ DE LEGALIZAÇÃO RESIDENCIAL UNIFAMILIAR") + `\nAraguari, 1º de janeiro de ${ANO}.`)]);
+  assert.equal(r.dados.decAnalisar, true);
+  assert.equal(r.dados.fimObra, undefined);
+  assert.equal(r.dados.requerente, "EXEMPLO INCORPORACOES LTDA");
+  assert.equal(r.dados.area, 69.99);
+  assert.equal(r.semaforo, "amarelo");
+  assert.ok(r.narrativa.some(n => /Documento principal — Alvará de Legalização: legalizacao\.pdf/.test(n.msg)));
+  assert.ok(r.narrativa.some(n => /Requerente: EXEMPLO INCORPORACOES LTDA \(Alvará de Legalização\)/.test(n.msg)));
+  assert.ok(r.alertas.some(a => /Alvará de Legalização .*ISS provavelmente decaiu/.test(a)));
+  assert.ok(!r.alertas.some(a => /Não encontrei o Alvará de Habite-se/.test(a)), r.alertas.join(" | "));
+  assert.equal(r.alertas.filter(a => /decad/.test(a)).length, 1, r.alertas.join(" | "));
+  // com habite-se também: a data do habite-se não vira conclusão da obra
+  r = analisarProcesso("1234-2026", [pdf("legalizacao.pdf", ALVARA_PREF("ALVARÁ DE LEGALIZAÇÃO RESIDENCIAL UNIFAMILIAR")),
+    pdf("habite.pdf", ALVARA_PREF("ALVARÁ DE HABITE-SE E BAIXA DE CONSTRUÇÃO RESIDENCIAL") + `\nAraguari, 1º de janeiro de ${ANO}.`)]);
+  assert.equal(r.dados.decAnalisar, true);
+  assert.equal(r.dados.fimObra, undefined);
+  assert.ok(r.narrativa.some(n => /Documento principal — Alvará de Habite-se: habite\.pdf \(pág\. 1\); Alvará de Legalização: legalizacao\.pdf/.test(n.msg)));
+  assert.ok(r.narrativa.some(n => /Não foi usada como conclusão da obra/.test(n.msg)));
 });

@@ -38,7 +38,9 @@ Para os casos calculados **somente pela área** (sem notas fiscais nem folha de 
 1. Baixe os processos para uma pasta, **uma pasta para cada processo**. Todos os arquivos de uma mesma pasta são lidos juntos; se você escolher a pasta de um único processo, ela mesma é o processo. Pastas sem PDF/Word (só fotos, por exemplo) são ignoradas.
 2. No assistente, abra **Leitura em lote → Escolher pasta dos processos…**.
 3. O programa lê PDFs (inclusive escaneados, por OCR — veja abaixo), Word (.docx), .odt e .txt e encontra: nº do processo, requerente, CPF/CNPJ (confere os dígitos), CCI, endereço da obra, área construída e tipo de obra (construção ou demolição).
-   - **Fonte principal:** o **Alvará de Habite-se e Baixa de Construção**. Os dados dele são **comparados com o Alvará de Construção**; valores de outros documentos (certidões, requerimento etc.) só são usados se o dado não estiver nos alvarás e não geram divergência. Sem o habite-se, o processo fica 🟡.
+   - **Fonte principal:** o **Alvará de Habite-se e Baixa de Construção**. Os dados dele são **comparados com o Alvará de Construção**; valores de outros documentos (certidões, requerimento etc.) só são usados se o dado não estiver nos alvarás e não geram divergência. Sem o habite-se, o processo fica 🟡 — salvo se houver Alvará de Legalização, que passa a ser a fonte principal.
+   - **Conclusão da obra (fato gerador):** o Alvará de Habite-se marca o fim da obra. Vale a **data da assinatura digital** do habite-se, se houver (a do arquivo PDF ou a estampada na página, como “assinado digitalmente por … em 15/03/2026”; com várias, a mais recente); sem ela, a **data do alvará** (“Data de emissão: …”, a linha “Araguari, 15 de março de 2026” ou “Data: …”). A data vai para o campo “Conclusão da obra” do rascunho. Se tiver mais de 5 anos, a decadência fica marcada para análise e o processo fica 🟡. Sem data, fica só um aviso “para conhecimento”.
+   - **Alvará de Legalização** (ex.: “Alvará de Legalização Residencial Unifamiliar”): em geral indica **construção antiga**, e o ISS provavelmente decaiu. A análise da decadência fica marcada no rascunho, **sem** data de conclusão — a data do alvará não é a do fim da obra; o fiscal informa a data e as provas. O processo fica 🟡.
    - O **nº do processo vem do nome da pasta**: uma pasta `5555` é o processo 5555 (também vale `5555-2026`). O ano de referência da tabela vem do nome da pasta ou dos documentos (ex.: “Nº DO PROCESSO: 5555/2026”); se não aparecer, usa o ano atual e avisa para conferir. O Alvará de Construção costuma ser de outro processo, mais antigo, e não interfere.
    - Reconhece o formato dos alvarás da prefeitura: requerente em “Concedido a: …” (com CPF/CNPJ) e endereço em “Local da construção: …”, inclusive quando continua na linha de baixo.
    - CCI: só o que vem rotulado como CCI (a “inscrição imobiliária/cadastral” é outro código). Endereços escritos de formas diferentes são reconhecidos como o mesmo.
@@ -59,7 +61,7 @@ Com várias unidades, cada guia de ISS é comparada com o ISS da unidade corresp
 
 Nada é enviado para a internet e nenhum processo é concluído automaticamente. Processos com número já existente no assistente são ignorados.
 
-A pasta `exemplos/lote-exemplo` tem 9 processos **fictícios** para experimentar (um de cada situação).
+A pasta `exemplos/lote-exemplo` tem 10 processos **fictícios** para experimentar (um de cada situação).
 
 ## Regras de cálculo
 

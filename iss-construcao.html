@@ -611,21 +611,25 @@ const SINAIS_FRACOS = [
 // ---------- Documentos: principal (habite-se) e comparação (alvará de construção) ----------
 const RE_TIT_PRINCIPAL = /alvara de habite-se|habite-se e baixa|alvara de baixa de (?:construcao|demolicao)|baixa de construcao|baixa de demolicao|certidao de habite-se|carta de habite-se|certidao de demolicao/;
 const RE_TIT_CONSTR = /(?:alvara|licenca)(?: de)?(?: licenca)?(?: para| de)? (?:construcao|construir|edificacao|reforma|ampliacao|regularizacao|demolicao|demolir)\b/;
+// Alvará de Legalização: construção antiga, regularizada agora; faz as vezes do habite-se como documento principal.
+const RE_TIT_LEGAL = /alvara de legalizacao/;
 const RE_TIT_OUTRO = /requerimento|certidao|declaracao|procuracao|memorial|projeto|matricula|recibo|comprovante|boleto|guia|documento de arrecadacao|nota fiscal|termo|contrato|oficio|despacho|parecer|laudo|planta|carne/;
 const NIVEIS = { principal: "Alvará de Habite-se", construcao: "Alvará de Construção", outro: "outros documentos" };
 // Tipo do documento pelo título: olha as primeiras linhas da página (o primeiro título encontrado vale).
 // Se nenhuma linha começar com um título, procura os títulos dos alvarás no começo do texto.
 const _ancora = re => new RegExp("^[ \\t]*(?:" + re.source + ")");
-const _RE_L_PRINC = _ancora(RE_TIT_PRINCIPAL), _RE_L_CONSTR = _ancora(RE_TIT_CONSTR), _RE_L_OUTRO = _ancora(RE_TIT_OUTRO);
+const _RE_L_PRINC = _ancora(RE_TIT_PRINCIPAL), _RE_L_LEGAL = _ancora(RE_TIT_LEGAL), _RE_L_CONSTR = _ancora(RE_TIT_CONSTR), _RE_L_OUTRO = _ancora(RE_TIT_OUTRO);
 function _origemPagina(dob) {
   const linhas = dob.split("\n").filter(l => l.trim()).slice(0, 8);
   for (let i = 0; i < linhas.length; i++) {
     if (_RE_L_PRINC.test(linhas[i])) return "principal";
+    if (_RE_L_LEGAL.test(linhas[i])) return "legalizacao";
     if (_RE_L_CONSTR.test(linhas[i])) return "construcao";
     if (i < 4 && _RE_L_OUTRO.test(linhas[i])) return "outro";
   }
   const inicio = dob.slice(0, 250);
   if (RE_TIT_PRINCIPAL.test(inicio)) return "principal";
+  if (RE_TIT_LEGAL.test(inicio)) return "legalizacao";
   if (RE_TIT_CONSTR.test(inicio)) return "construcao";
   return null; // sem título: continuação do documento anterior do mesmo arquivo
 }
@@ -786,6 +790,76 @@ const DICAS_FAIXA = [
 ];
 const RE_ANTIGA = /\bregulariza(?:cao|r)\b|\b(?:construida|concluida|edificada)\s+(?:em|no ano de|ha)\s+/g;
 
+// ---------- Data do Alvará de Habite-se (conclusão da obra = fato gerador) ----------
+const _MESES_DOB = ["janeiro", "fevereiro", "marco", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"];
+const _DATA = "(\\d{1,2}\\/\\d{1,2}\\/\\d{4}|\\d{4}[.\\-]\\d{2}[.\\-]\\d{2}|\\d{1,2}(?:º|°|o)?\\s+de\\s+(?:" + _MESES_DOB.join("|") + ")\\s+de\\s+\\d{4})(?!\\d)";
+// Assinatura estampada na página (ex.: "Documento assinado digitalmente por ... em 15/03/2026"; "Assinado de forma digital por ... Dados: 2026.03.15").
+const RE_DATA_ASSIN = new RegExp("assinad[oa]s? (?:digitalmente|eletronicamente|de forma (?:digital|eletronica)|com certificado digital)[\\s\\S]{0,200}?" + _DATA, "g");
+// Data do próprio alvará: rotulada como emissão/expedição, na linha de local e data ("Araguari, 15 de março de 2026") ou "Data: 15/03/2026".
+const RE_DATA_EMISSAO = new RegExp("\\b(?:data (?:de |da )?(?:emissao|expedicao|concessao)|emitid[oa] em|expedid[oa] em)\\s*[:\\-]?\\s*" + _DATA, "g");
+const RE_DATA_LOCAL = new RegExp("(?:^|\\n)[ \\t]*([a-z][a-z ]{2,40}?)(?:\\s*[\\/\\-–]\\s*[a-z]{2})?\\s*,\\s*(?:em\\s+)?" + _DATA, "g");
+const RE_DATA_ROTULO = new RegExp("\\bdata\\s*:\\s*" + _DATA, "g");
+const _hojeIso = () => { const d = new Date(); return `${d.getFullYear()}-${_pad(d.getMonth() + 1)}-${_pad(d.getDate())}`; };
+// "15/03/2026", "2026.03.15", "2026-03-15" ou "15 de março de 2026" → "2026-03-15"; data impossível ou futura → null.
+function _dataIso(s, hojeIso = _hojeIso()) {
+  let x, d, m, a;
+  if ((x = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(s))) [d, m, a] = [x[1], x[2], x[3]];
+  else if ((x = /^(\d{4})[.\-](\d{2})[.\-](\d{2})$/.exec(s))) [a, m, d] = [x[1], x[2], x[3]];
+  else if ((x = /^(\d{1,2})\D*?\s+de\s+([a-z]+)\s+de\s+(\d{4})$/.exec(s))) [d, m, a] = [x[1], _MESES_DOB.indexOf(x[2]) + 1, x[3]];
+  else return null;
+  d = Number(d); m = Number(m); a = Number(a);
+  if (a < 1950 || m < 1 || m > 12 || d < 1 || d > new Date(Date.UTC(a, m, 0)).getUTCDate()) return null;
+  const iso = `${a}-${_pad(m)}-${_pad(d)}`;
+  return iso > hojeIso ? null : iso;
+}
+// Datas das assinaturas digitais de um PDF (campo /M do dicionário de assinatura), que não aparecem no texto da página.
+function datasAssinaturaPDF(bytes) {
+  let s = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  const datas = [], re = /\/ByteRange\s*\[/g;
+  let m;
+  while ((m = re.exec(s))) {
+    const ini = s.lastIndexOf(" obj", m.index), fim = s.indexOf("endobj", m.index);
+    const dic = s.slice(ini < 0 ? Math.max(0, m.index - 2000) : ini, fim < 0 ? m.index + 60000 : fim);
+    const d = /\/M\s*\(D:(\d{4})(\d{2})(\d{2})/.exec(dic);
+    if (d && !datas.includes(`${d[1]}-${d[2]}-${d[3]}`)) datas.push(`${d[1]}-${d[2]}-${d[3]}`);
+  }
+  return datas;
+}
+// Data do Alvará de Habite-se: a da assinatura digital (a mais recente, se houver várias); sem ela, a data do próprio alvará.
+// pgs: páginas do habite-se; paginas: todas as páginas lidas; arquivos: os arquivos (com as assinaturas de cada PDF).
+function dataDoHabite(pgs, paginas, arquivos) {
+  const hojeIso = _hojeIso(), assin = [];
+  for (const nome of new Set(pgs.map(p => p.arquivo))) {
+    const a = arquivos.find(x => x.nome === nome);
+    // Só vale se o arquivo for só o habite-se: num arquivo com vários documentos, a assinatura pode ser de outro.
+    if (!a || !(a.assinaturas || []).length || !paginas.every(p => p.arquivo !== nome || p.doc === "principal")) continue;
+    for (const iso of a.assinaturas.map(d => _dataIso(d, hojeIso)).filter(Boolean))
+      assin.push({ iso, fonte: { arquivo: nome, pagina: 0, trecho: `assinatura digital do arquivo: ${dataBR(iso)}` } });
+  }
+  _cada(pgs, RE_DATA_ASSIN, (m, pg) => {
+    // "assinado eletronicamente conforme o Decreto nº 1.234, de 15/04/2019": a data é da norma, não da assinatura.
+    if (/\b(?:decreto|lei|portaria|resolucao|instrucao normativa|medida provisoria|mp)\b[^\n]{0,30}\bde\s*$/.test(m[0].slice(0, -m[1].length))) return;
+    const iso = _dataIso(m[1].replace(/\s+/g, " "), hojeIso);
+    if (iso) assin.push({ iso, fonte: _fonte(pg, m.index, m.index + m[0].length) });
+  });
+  if (assin.length) {
+    const ult = assin.reduce((x, y) => (y.iso > x.iso ? y : x));
+    const outras = [...new Set(assin.map(x => x.iso))].filter(i => i !== ult.iso).sort();
+    return { ...ult, desc: "data da assinatura digital do Alvará de Habite-se" + (outras.length ? ` (a mais recente; há também ${outras.map(dataBR).join(", ")})` : "") };
+  }
+  for (const re of [RE_DATA_EMISSAO, RE_DATA_LOCAL, RE_DATA_ROTULO]) {
+    let achou = null;
+    _cada(pgs, re, (m, pg) => {
+      if (achou || (re === RE_DATA_LOCAL && /valid|venc|prazo/.test(m[1]))) return;
+      const iso = _dataIso(m[m.length - 1].replace(/\s+/g, " "), hojeIso);
+      if (iso) achou = { iso, fonte: _fonte(pg, m.index, m.index + m[0].length) };
+    });
+    if (achou) return { ...achou, desc: "data do Alvará de Habite-se (não encontrei assinatura digital)" };
+  }
+  return null;
+}
+
 // Compara uma guia/carnê de ISS com o ISS que deveria ser pago. Tolerância de 1 centavo por parcela (arredondamento).
 function compararGuiaComIss(g, iss) {
   const vs = (g.valores || []).map(v => v.valor).filter(v => v > 0);
@@ -858,7 +932,7 @@ function analisarProcesso(nomePasta, arquivos) {
       const dob = dobrar(texto);
       const o = _origemPagina(dob);
       if (o) atual = o;
-      paginas.push({ arquivo: a.nome, pagina: i + 1, texto, dob, origem: atual || "outro", ocr: !!(a.paginasOcr && a.paginasOcr.includes(i + 1)) });
+      paginas.push({ arquivo: a.nome, pagina: i + 1, texto, dob, origem: atual === "legalizacao" ? "principal" : atual || "outro", doc: atual || "outro", ocr: !!(a.paginasOcr && a.paginasOcr.includes(i + 1)) });
     });
   }
   const lidos = arquivos.filter(a => a.situacao === "lido");
@@ -877,11 +951,15 @@ function analisarProcesso(nomePasta, arquivos) {
   const pgsDe = o => paginas.filter(p => p.origem === o);
   const descrever = ps => [...new Set(ps.map(p => p.arquivo))].map(n => `${n} (pág. ${ps.filter(p => p.arquivo === n).map(p => p.pagina).join(", ")})`).join("; ");
   const temPrincipal = pgsDe("principal").length > 0, temConstr = pgsDe("construcao").length > 0;
-  if (temPrincipal) diz("ok", `Documento principal — Alvará de Habite-se: ${descrever(pgsDe("principal"))}.` +
+  // O documento principal é o Alvará de Habite-se ou, sem ele, o Alvará de Legalização.
+  const pgsHabite = paginas.filter(p => p.doc === "principal"), pgsLegal = paginas.filter(p => p.doc === "legalizacao");
+  const PRINC = pgsHabite.length || !pgsLegal.length ? "Alvará de Habite-se" : "Alvará de Legalização";
+  const niveis = { ...NIVEIS, principal: PRINC };
+  if (temPrincipal) diz("ok", `Documento principal — ${pgsHabite.length && pgsLegal.length ? `Alvará de Habite-se: ${descrever(pgsHabite)}; Alvará de Legalização: ${descrever(pgsLegal)}` : `${PRINC}: ${descrever(pgsDe("principal"))}`}.` +
     (temConstr ? ` Comparado com o Alvará de Construção: ${descrever(pgsDe("construcao"))}.` : " Não encontrei o Alvará de Construção para comparar."));
   else alerta(`Não encontrei o Alvará de Habite-se e Baixa de Construção (documento principal). ${temConstr ? `Usei o Alvará de Construção (${descrever(pgsDe("construcao"))}) e os demais documentos` : "Os dados foram lidos dos demais documentos"}; confira com atenção.`);
   const ocrAlvaras = paginas.filter(p => p.ocr && p.origem !== "outro");
-  if (ocrAlvaras.length) alerta(`O ${ocrAlvaras.some(p => p.origem === "principal") ? "Alvará de Habite-se" : "Alvará de Construção"} foi lido por reconhecimento de imagem (OCR): confira nome, CPF, CCI, endereço e área com o documento.`, { arquivo: ocrAlvaras[0].arquivo, pagina: ocrAlvaras[0].pagina, trecho: "" });
+  if (ocrAlvaras.length) alerta(`O ${ocrAlvaras.some(p => p.origem === "principal") ? PRINC : "Alvará de Construção"} foi lido por reconhecimento de imagem (OCR): confira nome, CPF, CCI, endereço e área com o documento.`, { arquivo: ocrAlvaras[0].arquivo, pagina: ocrAlvaras[0].pagina, trecho: "" });
   // Páginas de referência para tipo de obra, faixa e obra antiga: as do documento mais confiável.
   const pgsRef = temPrincipal ? pgsDe("principal") : temConstr ? pgsDe("construcao") : paginas;
 
@@ -1070,11 +1148,11 @@ function analisarProcesso(nomePasta, arquivos) {
   // Relata um campo: de onde veio, conferência com o alvará de construção e divergências.
   const relatar = (rotulo, sel, fmt = v => v) => {
     const g = sel.escolhido, v = fmt(g.valor);
-    diz("ok", `${rotulo}: ${v} (${sel.nivel === "principal" ? "Alvará de Habite-se" : sel.nivel === "construcao" ? "Alvará de Construção" : "outros documentos"}).`, g.fontes[0]);
-    if (sel.outros.length) alerta(`${rotulo}: ${sel.nivel === "outro" ? "os documentos trazem" : `o ${NIVEIS[sel.nivel]} traz`} valores diferentes (${[g, ...sel.outros].slice(0, 4).map(x => fmt(x.valor)).join(" | ")}). Usei ${v}; confirme.`, sel.outros[0].fontes[0]);
+    diz("ok", `${rotulo}: ${v} (${niveis[sel.nivel]}).`, g.fontes[0]);
+    if (sel.outros.length) alerta(`${rotulo}: ${sel.nivel === "outro" ? "os documentos trazem" : `o ${niveis[sel.nivel]} traz`} valores diferentes (${[g, ...sel.outros].slice(0, 4).map(x => fmt(x.valor)).join(" | ")}). Usei ${v}; confirme.`, sel.outros[0].fontes[0]);
     if (sel.construcao) {
       if (sel.construcao.confere) diz("ok", `${rotulo} confere com o Alvará de Construção.`, sel.construcao.grupo.fontes[0]);
-      else alerta(`${rotulo} diferente no Alvará de Construção (${fmt(sel.construcao.grupo.valor)}). Usei o do Alvará de Habite-se (${v}); confirme.`, sel.construcao.grupo.fontes[0]);
+      else alerta(`${rotulo} diferente no Alvará de Construção (${fmt(sel.construcao.grupo.valor)}). Usei o do ${PRINC} (${v}); confirme.`, sel.construcao.grupo.fontes[0]);
     }
   };
 
@@ -1086,7 +1164,7 @@ function analisarProcesso(nomePasta, arquivos) {
     diz("ok", `Número do processo: ${dados.processo} (nome da pasta).`, { arquivo: "(nome da pasta)", pagina: 0, trecho: nomePasta });
     const pr = cProc.filter(c => c.origem === "principal" && c.chave !== dados.processo);
     if (pr.length && !cProc.some(c => c.origem === "principal" && c.chave === dados.processo))
-      alerta(`O Alvará de Habite-se menciona o processo ${pr[0].valor}, diferente do nome da pasta (${dados.processo}). Usei ${dados.processo}; confirme.`, pr[0].fonte);
+      alerta(`O ${PRINC} menciona o processo ${pr[0].valor}, diferente do nome da pasta (${dados.processo}). Usei ${dados.processo}; confirme.`, pr[0].fonte);
   } else if (/\d/.test(nomePasta || "")) {
     // Pasta só com o número (ex.: "5555"): o processo é esse número; o ano da tabela vem dos documentos.
     const num = String(Number(/\d{1,7}/.exec(nomePasta)[0]));
@@ -1102,7 +1180,7 @@ function analisarProcesso(nomePasta, arquivos) {
     }
     const pr = cProc.filter(c => c.origem === "principal" && c.chave.split("/")[0] !== num);
     if (pr.length && !cProc.some(c => c.origem === "principal" && c.chave.split("/")[0] === num))
-      alerta(`O Alvará de Habite-se menciona o processo ${pr[0].valor}, diferente do nome da pasta (${num}). Usei ${num}; confirme.`, pr[0].fonte);
+      alerta(`O ${PRINC} menciona o processo ${pr[0].valor}, diferente do nome da pasta (${num}). Usei ${num}; confirme.`, pr[0].fonte);
   } else if (selProc) { dados.processo = selProc.escolhido.valor; relatar("Número do processo", selProc); }
   else faltando.push("número do processo (no nome da pasta)");
 
@@ -1127,7 +1205,7 @@ function analisarProcesso(nomePasta, arquivos) {
   const ampl = areasN.filter(c => c.tipo === "ampliacao"), exist = areasN.filter(c => c.tipo === "existente");
   const unidades = [...new Map(unidN.map(u => [u.chave, u])).values()];
   const baseArea = demolicao && areasDemol.length ? areasDemol : areasConstr;
-  const onde = nivelArea ? ` (${NIVEIS[nivelArea]})` : "";
+  const onde = nivelArea ? ` (${niveis[nivelArea]})` : "";
   if (ampl.length) {
     const g = _agrupar(ampl)[0];
     dados.area = g.valor;
@@ -1137,7 +1215,7 @@ function analisarProcesso(nomePasta, arquivos) {
     dados.area = gs[0].valor;
     diz("ok", `Área ${demolicao ? "demolida" : "construída"}: ${fmtNum(dados.area)} m²${onde}.` + (gs[0].n > 1 ? ` Mesmo valor em ${gs[0].n} lugares.` : ""), gs[0].fontes[0]);
     if (gs.length > 1) alerta(`As áreas não conferem${nivelArea === "outro" ? " entre os documentos" : ` no ${NIVEIS[nivelArea]}`}: ${gs.map(g => fmtNum(g.valor) + " m²").join(", ")}. Usei ${fmtNum(dados.area)} m²; confirme.`, gs[1].fontes[0]);
-    if (baseArea.some(c => c.tipo === "regularizacao")) alerta("É uma regularização/averbação de obra existente: avalie a decadência (a obra pode ter sido concluída há mais de 5 anos).", baseArea.find(c => c.tipo === "regularizacao").fonte);
+    if (!pgsLegal.length && baseArea.some(c => c.tipo === "regularizacao")) alerta("É uma regularização/averbação de obra existente: avalie a decadência (a obra pode ter sido concluída há mais de 5 anos).", baseArea.find(c => c.tipo === "regularizacao").fonte);
   } else if (unidades.length) {
     dados.area = r2(unidades.reduce((a, u) => a + u.valor, 0));
     alerta(`Não encontrei a área total; usei a soma das unidades (${unidades.map(u => `${u.rotulo}: ${fmtNum(u.valor)} m²`).join("; ")}) = ${fmtNum(dados.area)} m²${onde}. Confirme.`, unidades[0].fonte);
@@ -1152,7 +1230,7 @@ function analisarProcesso(nomePasta, arquivos) {
     if (ac.length) {
       const igual = ac.find(c => Math.abs(c.valor - dados.area) < 0.01);
       if (igual) diz("ok", "A área confere com o Alvará de Construção.", igual.fonte);
-      else alerta(`A área do Alvará de Construção (${fmtNum(_agrupar(ac)[0].valor)} m²) é diferente da do Alvará de Habite-se (${fmtNum(dados.area)} m²). Usei a do Habite-se; confirme.`, ac[0].fonte);
+      else alerta(`A área do Alvará de Construção (${fmtNum(_agrupar(ac)[0].valor)} m²) é diferente da do ${PRINC} (${fmtNum(dados.area)} m²). Usei a do ${PRINC}; confirme.`, ac[0].fonte);
     }
   }
 
@@ -1167,7 +1245,7 @@ function analisarProcesso(nomePasta, arquivos) {
     else diz("ok", `A soma das ${unidades.length} unidades (${lista}) confere com a área total de ${fmtNum(soma)} m². O cálculo é feito por unidade, cada uma na sua faixa da tabela.`, unidades[0].fonte);
     dados.area = soma;
   }
-  if (unidades.some(u => u.tipo === "regularizacao") && !baseArea.some(c => c.tipo === "regularizacao"))
+  if (!pgsLegal.length && unidades.some(u => u.tipo === "regularizacao") && !baseArea.some(c => c.tipo === "regularizacao"))
     alerta("Há área a averbar/legalizar (obra existente): avalie a decadência.", unidades.find(u => u.tipo === "regularizacao").fonte);
 
   // Tipo de obra
@@ -1183,11 +1261,29 @@ function analisarProcesso(nomePasta, arquivos) {
     if (fonte) alerta(`O texto menciona “${termo}”. A faixa ficou automática pela área; confirme se deve ser “${nomeCategoria(d.faixa)}”.`, fonte);
   }
   // Obra antiga
-  if (!cArea.some(c => c.tipo === "regularizacao") && !unidades.some(u => u.tipo === "regularizacao")) {
+  if (!pgsLegal.length && !cArea.some(c => c.tipo === "regularizacao") && !unidades.some(u => u.tipo === "regularizacao")) {
     let fonte = null;
     _cada(pgsRef, RE_ANTIGA, (m, pg) => { if (!fonte) fonte = _fonte(pg, m.index, m.index + m[0].length); });
     if (fonte) alerta("O texto sugere obra antiga ou regularização: avalie a decadência.", fonte);
   }
+
+  // 6. Conclusão da obra (fato gerador) e decadência
+  const dataHab = pgsHabite.length ? dataDoHabite(pgsHabite, paginas, arquivos) : null;
+  if (pgsLegal.length) {
+    // Construção antiga: a data do alvará não é a da conclusão da obra, que deve ser provada.
+    dados.decAnalisar = true;
+    alerta(`Há Alvará de Legalização (${descrever(pgsLegal)}): em geral indica construção antiga, e o ISS provavelmente decaiu. A análise da decadência ficou marcada no rascunho; informe a data de conclusão da obra e as provas.`, { arquivo: pgsLegal[0].arquivo, pagina: pgsLegal[0].pagina, trecho: _trecho(pgsLegal[0], 0, 80) });
+    if (dataHab) diz("info", `Data do Alvará de Habite-se: ${dataBR(dataHab.iso)}. Não foi usada como conclusão da obra, porque o Alvará de Legalização indica construção antiga.`, dataHab.fonte);
+  } else if (dataHab) {
+    // O habite-se marca o fim da obra.
+    dados.fimObra = dataHab.iso;
+    diz("ok", `Conclusão da obra (fato gerador): ${dataBR(dataHab.iso)} — ${dataHab.desc}.`, dataHab.fonte);
+    const dec = calcularDecadencia({ decAnalisar: true, fimObra: dataHab.iso, data: _hojeIso() });
+    if (dec.decaido) {
+      dados.decAnalisar = true;
+      alerta(`Pela data do Alvará de Habite-se (${dataBR(dataHab.iso)}), o prazo para lançar o ISS terminou em ${dataBR(dec.limite)} (art. 173, I, do CTN). A análise da decadência ficou marcada no rascunho; confira as provas.`, dataHab.fonte);
+    }
+  } else if (pgsHabite.length) avisa("Não encontrei a data do Alvará de Habite-se nem de assinatura digital; se precisar, informe a conclusão da obra (fato gerador).", { arquivo: pgsHabite[0].arquivo, pagina: pgsHabite[0].pagina, trecho: "" });
 
   for (const f of faltando) alerta(`Não encontrei: ${f}.`);
   if (!lidos.length) alerta("Nenhum arquivo deste processo pôde ser lido.");
@@ -2256,7 +2352,7 @@ const textosLote = new Map();
 function textoLidoHTML(pasta) {
   const arqs = textosLote.get(pasta);
   if (!arqs) return `<p class="muted">O texto só fica disponível logo após a leitura do lote (não é salvo).</p>`;
-  return arqs.map(a => `<div class="texto-lido"><b>${esc(a.nome)}</b> — ${{ lido: "lido", escaneado: "sem texto (escaneado)", imagem: "imagem (não lida)", nao_suportado: "não lido", erro: "erro" }[a.situacao] || a.situacao}${a.paginasOcr ? ` por OCR (pág. ${a.paginasOcr.join(", ")})` : ""}${a.detalhe ? ` — ${esc(a.detalhe)}` : ""}
+  return arqs.map(a => `<div class="texto-lido"><b>${esc(a.nome)}</b> — ${{ lido: "lido", escaneado: "sem texto (escaneado)", imagem: "imagem (não lida)", nao_suportado: "não lido", erro: "erro" }[a.situacao] || a.situacao}${a.paginasOcr ? ` por OCR (pág. ${a.paginasOcr.join(", ")})` : ""}${a.assinaturas ? ` — assinatura digital de ${a.assinaturas.map(dataBR).join(", ")}` : ""}${a.detalhe ? ` — ${esc(a.detalhe)}` : ""}
     ${(a.paginas || []).map((t, i) => `<div class="muted" style="margin-top:6px">Página ${i + 1}</div><pre>${esc(t)}</pre>`).join("")}</div>`).join("");
 }
 const detalhesTexto = pasta => textosLote.has(pasta) ? `<details data-texto="${esc(pasta)}"><summary>Ver texto lido (para conferência)</summary><div class="texto-corpo"></div></details>` : "";
@@ -2423,7 +2519,9 @@ async function lerConteudo(f, nome, ext, r, progresso) {
   const ocrLigado = db.config.ocrPdf !== false;
   try {
     if (ext === "pdf") {
-      const lido = await lerPDF(await f.arrayBuffer(), { ocr: ocrLigado, progresso: (i, n) => progresso && progresso(`reconhecendo texto (OCR) de “${nome}”, página ${i} de ${n}`) });
+      const buf = await f.arrayBuffer(), assinaturas = datasAssinaturaPDF(new Uint8Array(buf));
+      if (assinaturas.length) r.assinaturas = assinaturas;
+      const lido = await lerPDF(buf, { ocr: ocrLigado, progresso: (i, n) => progresso && progresso(`reconhecendo texto (OCR) de “${nome}”, página ${i} de ${n}`) });
       r.paginas = lido.paginas;
       if (lido.paginasOcr.length) r.paginasOcr = lido.paginasOcr;
       const comTexto = r.paginas.filter(_temTexto).length;
@@ -2464,7 +2562,7 @@ function agruparArquivos(files) {
 
 function criarDeLeitura(an, pasta, forcado) {
   const p = novoProcesso();
-  for (const k of ["processo", "anoManual", "requerente", "documento", "cci", "endereco", "area", "unidades", "tipoObra", "categoria"]) if (an.dados[k] !== undefined) p[k] = an.dados[k];
+  for (const k of ["processo", "anoManual", "requerente", "documento", "cci", "endereco", "area", "unidades", "tipoObra", "categoria", "fimObra", "decAnalisar"]) if (an.dados[k] !== undefined) p[k] = an.dados[k];
   p.temMaoDeObra = forcado ? null : (an.dados.temMaoDeObra === undefined ? null : an.dados.temMaoDeObra);
   const alertas = an.alertas.slice();
   const narrativa = an.narrativa.slice(0, -1), conclusao = an.narrativa[an.narrativa.length - 1];
@@ -2476,7 +2574,7 @@ function criarDeLeitura(an, pasta, forcado) {
   } else if (p.area) {
     narrativa.push({ t: "info", msg: (res.unidades ? `Cálculo por unidade (tabela de ${res.ano}): ${descreverUnidades(res)}; total ${fmtBRL(res.valorImovel)}`
       : `Cálculo: tabela de ${res.ano}, faixa “${res.categoriaNome}” (${fmtBRL(res.valorM2)}/m²) × ${fmtNum(res.area)} m² = ${fmtBRL(res.valorImovel)}`) +
-      (res.demolicao ? `; base reduzida a ${fmtPct(res.percBC)} = ${fmtBRL(res.base)}` : "") + `; alíquota ${fmtPct(res.aliquota)} → ISS de ${fmtBRL(res.iss)}.` });
+      (res.demolicao ? `; base reduzida a ${fmtPct(res.percBC)} = ${fmtBRL(res.base)}` : "") + `; alíquota ${fmtPct(res.aliquota)} → ISS de ${fmtBRL(res.issApurado)}` + (res.decaido ? `; com a decadência, ISS a pagar de ${fmtBRL(0)}.` : ".") });
   }
   if ((an.guias || []).length && !res.erros.length && res.area > 0) {
     // ISS de cada unidade (cálculo só pela área): para reconhecer guias emitidas por unidade.
