@@ -298,13 +298,18 @@ function diasEntre(isoA, isoB) {
   return Math.round((t(isoB) - t(isoA)) / 86400000);
 }
 // Fato gerador = data de conclusão da obra; referência = data do lançamento (padrão: data do cálculo).
+// Sem a data exata (casas antigas), basta o ano da conclusão: no art. 173, I, só o ano importa; no art. 150, § 4º,
+// conta-se de 31/12 desse ano, a data mais tardia possível (não antecipa a decadência).
 function calcularDecadencia(p) {
   if (!p.decAnalisar) return { analisada: false, decaido: false, erros: [] };
-  const r = { analisada: true, erros: [], fundamento: p.decFundamento === "150" ? "150" : "173", fg: p.fimObra || "", referencia: p.decRef || p.data || "" };
-  if (!_isoOk(r.fg)) r.erros.push("Informe a data de conclusão da obra (seção 2).");
+  const soAno = !!p.fimObraSoAno, ano = String(p.fimObraAno || "").trim();
+  const r = { analisada: true, erros: [], fundamento: p.decFundamento === "150" ? "150" : "173", soAno,
+    fg: soAno ? (/^\d{4}$/.test(ano) && Number(ano) >= 1900 ? `${ano}-12-31` : "") : p.fimObra || "", referencia: p.decRef || p.data || "" };
+  if (!_isoOk(r.fg)) r.erros.push(soAno ? "Informe o ano de conclusão da obra (seção 2)." : "Informe a data de conclusão da obra (seção 2).");
   if (!_isoOk(r.referencia)) r.erros.push("Informe a data de referência do lançamento.");
   if (r.erros.length) { r.decaido = false; return r; }
-  if (r.fg > r.referencia) r.erros.push("A data de conclusão da obra é posterior à data do lançamento.");
+  if (soAno ? r.fg.slice(0, 4) > r.referencia.slice(0, 4) : r.fg > r.referencia)
+    r.erros.push(soAno ? "O ano de conclusão da obra é posterior ao do lançamento." : "A data de conclusão da obra é posterior à data do lançamento.");
   if (r.fundamento === "173") {
     const y = Number(r.fg.slice(0, 4));
     r.inicio = `${y + 1}-01-01`;
@@ -317,6 +322,9 @@ function calcularDecadencia(p) {
   r.diasRestantes = diasEntre(r.referencia, r.limite);
   return r;
 }
+// Conclusão da obra nos documentos: "15/03/2012" ou, sabido só o ano, "2012"; no texto: "em 15/03/2012" ou "no ano de 2012".
+const conclusaoBR = dec => dec.soAno ? dec.fg.slice(0, 4) : dataBR(dec.fg);
+const conclusaoTexto = dec => dec.soAno ? `no ano de ${dec.fg.slice(0, 4)}, não sendo possível identificar a data exata` : `em ${dataBR(dec.fg)}`;
 
 // Cálculo do ISS. `linha` = linha da tabela do ano de referência.
 function calcular(p, linha) {
@@ -457,7 +465,7 @@ function csvLinhaProcesso(p, res, fiscal = p.fiscal || {}) {
     n(res.glosado), n(res.deducoes), n(res.base), n(res.percBC), n(res.aliquota), n(res.iss),
     fiscal.nome || "", fiscal.matricula || "",
     p.concluidoEm ? new Date(p.concluidoEm).toLocaleString("pt-BR") : "", (p.obs || "").replace(/\s+/g, " ").trim(),
-    n(res.issApurado), dec.analisada ? "Sim" : "Não", dec.analisada ? dataBR(dec.fg) : "",
+    n(res.issApurado), dec.analisada ? "Sim" : "Não", dec.analisada ? conclusaoBR(dec) : "",
     dec.analisada ? (dec.fundamento === "150" ? "Art. 150, § 4º, CTN" : "Art. 173, I, CTN") : "",
     dec.analisada && dec.limite ? dataBR(dec.limite) : "", dec.analisada ? (dec.decaido ? "Sim" : "Não") : "",
     p.leitura ? `Leitura automática (${{ verde: "simples", amarelo: "atenção", vermelho: "com nota/folha" }[p.leitura.semaforo] || ""})` : "Manual",
@@ -1272,7 +1280,7 @@ function analisarProcesso(nomePasta, arquivos) {
   if (pgsLegal.length) {
     // Construção antiga: a data do alvará não é a da conclusão da obra, que deve ser provada.
     dados.decAnalisar = true;
-    alerta(`Há Alvará de Legalização (${descrever(pgsLegal)}): em geral indica construção antiga, e o ISS provavelmente decaiu. A análise da decadência ficou marcada no rascunho; informe a data de conclusão da obra e as provas.`, { arquivo: pgsLegal[0].arquivo, pagina: pgsLegal[0].pagina, trecho: _trecho(pgsLegal[0], 0, 80) });
+    alerta(`Há Alvará de Legalização (${descrever(pgsLegal)}): em geral indica construção antiga, e o ISS provavelmente decaiu. A análise da decadência ficou marcada no rascunho; informe a data de conclusão da obra (ou só o ano, se a data exata não puder ser identificada) e as provas.`, { arquivo: pgsLegal[0].arquivo, pagina: pgsLegal[0].pagina, trecho: _trecho(pgsLegal[0], 0, 80) });
     if (dataHab) diz("info", `Data do Alvará de Habite-se: ${dataBR(dataHab.iso)}. Não foi usada como conclusão da obra, porque o Alvará de Legalização indica construção antiga.`, dataHab.fonte);
   } else if (dataHab) {
     // O habite-se marca o fim da obra.
@@ -1338,7 +1346,7 @@ function migrarProcesso(p) {
     p.fiscalProprio = !!f.nome && f.nome !== db.config.fiscal.nome;
     if (p.status === "concluido" && !p.fiscalCongelado && f.nome) p.fiscalCongelado = structuredClone(f);
   }
-  const padrao = { unidades: [], decAnalisar: false, decFundamento: "173", decRef: "", decProvas: [], decProvaDesc: "", parecerEditado: null };
+  const padrao = { unidades: [], fimObraSoAno: false, fimObraAno: "", decAnalisar: false, decFundamento: "173", decRef: "", decProvas: [], decProvaDesc: "", parecerEditado: null };
   for (const k in padrao) if (p[k] === undefined) p[k] = padrao[k];
   return p;
 }
@@ -1368,7 +1376,7 @@ function novoProcesso() {
   return {
     id: uid(), criadoEm: Date.now(), atualizadoEm: Date.now(), status: "rascunho",
     processo: "", anoManual: "", data: hoje(), requerente: "", documento: "", cci: "", endereco: "",
-    tipoObra: "construcao", categoria: "auto", area: "", inicioObra: "", fimObra: "",
+    tipoObra: "construcao", categoria: "auto", area: "", inicioObra: "", fimObra: "", fimObraSoAno: false, fimObraAno: "",
     unidades: [], temMaoDeObra: null, usaPropria: false, usaTerceiros: false, propria: [], terceiros: [],
     checks: {}, obs: "", fiscal: { nome: "", cargo: "", matricula: "" }, fiscalProprio: false, decisaoEditada: null,
     decAnalisar: false, decFundamento: "173", decRef: "", decProvas: [], decProvaDesc: "", parecerEditado: null
@@ -1383,10 +1391,13 @@ function linhaTabela(p) {
 const resultado = p => calcular(p, linhaTabela(p));
 
 // ---------- Checklist ----------
+// Fim da obra para conferir datas: a data de conclusão ou, sabido só o ano, o ano.
+const fimDaObra = p => p.fimObraSoAno ? String(p.fimObraAno || "").trim() : p.fimObra || "";
 function dentroPeriodo(p, iso) {
   if (!iso) return true;
+  const fim = fimDaObra(p);
   if (p.inicioObra && iso < p.inicioObra.slice(0, iso.length)) return false;
-  if (p.fimObra && iso > p.fimObra.slice(0, iso.length)) return false;
+  if (fim && iso.slice(0, fim.length) > fim.slice(0, iso.length)) return false;
   return true;
 }
 function checklist(p, res) {
@@ -1408,7 +1419,7 @@ function checklist(p, res) {
 
   const dec = res.decadencia;
   if (dec.analisada) {
-    auto(_isoOk(p.fimObra), "Decadência — data de conclusão da obra");
+    auto(_isoOk(dec.fg), dec.soAno ? "Decadência — ano de conclusão da obra" : "Decadência — data de conclusão da obra");
     auto(!dec.erros.length, "Decadência — datas coerentes", true, dec.erros.join(" "));
     auto((p.decProvas || []).length > 0, "Decadência — prova da data de conclusão indicada");
     manual("dec_provas", "Provas da data de conclusão da obra conferidas");
@@ -1422,7 +1433,7 @@ function checklist(p, res) {
       const ls = p.propria;
       auto(ls.length > 0, "Anexo I — ao menos um lançamento de mão de obra própria");
       auto(ls.every(l => l.competencia && totalLinhaPropria(l) > 0), "Anexo I — competência e valores preenchidos em todos os lançamentos");
-      if (p.inicioObra || p.fimObra) auto(ls.every(l => dentroPeriodo(p, l.competencia)), "Anexo I — competências dentro do período da obra", false);
+      if (p.inicioObra || fimDaObra(p)) auto(ls.every(l => dentroPeriodo(p, l.competencia)), "Anexo I — competências dentro do período da obra", false);
       manual("folhas", "Folhas de pagamento conferidas");
       manual("encargos", "Guias de recolhimento do INSS e FGTS conferidas");
       manual("rescisoes", "Termos de rescisão conferidos (se houver)");
@@ -1433,7 +1444,7 @@ function checklist(p, res) {
       auto(ns.every(n => n.data && n.nf && parseNum(n.valor) > 0), "Anexo II — data, número e valor preenchidos em todas as notas");
       auto(ns.every(n => n.aceita === false || (n.codMob || "").trim()), "Anexo II — código mobiliário do prestador nas notas aceitas", false,
         "Sem cadastro mobiliário em Araguari, a dedução pode ser glosada (art. 10).");
-      if (p.inicioObra || p.fimObra) auto(ns.every(n => dentroPeriodo(p, n.data)), "Anexo II — datas das notas dentro do período da obra", false);
+      if (p.inicioObra || fimDaObra(p)) auto(ns.every(n => dentroPeriodo(p, n.data)), "Anexo II — datas das notas dentro do período da obra", false);
       manual("nf_requisitos", "Notas com emitente, destinatário e endereço da obra (art. 9º, X)");
       manual("nf_iss", "Serviços tributados pelo ISS em Araguari (art. 10)");
     }
@@ -1586,8 +1597,11 @@ function vistaEditor(p) {
       <label class="campo"><span>${(p.unidades || []).length ? "Faixa da tabela (para todas as unidades)" : "Faixa da tabela"}</span><select data-f="categoria">${catOpts}</select></label>
     </div><div class="grade" style="margin-top:12px">
       ${campo("Início da obra (opcional)", "inicioObra", p, { tipo: "date" })}
-      ${campo(p.decAnalisar ? "Conclusão da obra (fato gerador)" : "Conclusão da obra (opcional)", "fimObra", p, { tipo: "date", req: !!p.decAnalisar })}
+      ${p.fimObraSoAno
+        ? campo(p.decAnalisar ? "Ano de conclusão da obra (fato gerador)" : "Ano de conclusão da obra (opcional)", "fimObraAno", p, { req: !!p.decAnalisar, ph: "ex.: 2012", extra: 'inputmode="numeric" maxlength="4"' })
+        : campo(p.decAnalisar ? "Conclusão da obra (fato gerador)" : "Conclusão da obra (opcional)", "fimObra", p, { tipo: "date", req: !!p.decAnalisar })}
     </div>
+    <label style="display:flex;gap:6px;align-items:center;margin-top:8px;font-size:13px"><input type="checkbox" data-f="fimObraSoAno" ${p.fimObraSoAno ? "checked" : ""}> Não é possível identificar a data exata da conclusão (casas antigas): informar só o ano</label>
     ${tabelaUnidades(p, res)}
     <div class="aviso info" id="infoFaixa">${infoFaixa(p, res)}</div></div>`;
 
@@ -1848,7 +1862,7 @@ function textoDecisaoPadrao(p, res) {
   else fund.push(`Aplica-se a alíquota de ${fmtPct(res.aliquota)} sobre a base de cálculo de ${fmtBRL(res.base)}.`);
   const dec = res.decadencia;
   if (dec.analisada) {
-    rel.push(`Conforme ${esc(textoProvas(p))}, a obra foi concluída em ${dataBR(dec.fg)}.`);
+    rel.push(`Conforme ${esc(textoProvas(p))}, a obra foi concluída ${conclusaoTexto(dec)}.`);
     fund.push(res.decaido
       ? `Contudo, conforme parecer de decadência anexo, o prazo para a constituição do crédito tributário, contado nos termos do ${dec.fundamento === "150" ? "art. 150, § 4º" : "art. 173, I"}, do Código Tributário Nacional, encerrou-se em ${dataBR(dec.limite)}, estando o crédito de ${fmtBRL(res.issApurado)} extinto pela decadência (art. 156, V, do CTN).`
       : `Conforme parecer de decadência anexo, não se operou a decadência, uma vez que o prazo para a constituição do crédito tributário encerra-se somente em ${dataBR(dec.limite)}.`);
@@ -1879,15 +1893,16 @@ function infoDecadencia(res) {
   const dec = res.decadencia;
   if (!dec.analisada) return "";
   if (dec.erros.length) return `<div class="aviso err">${esc(dec.erros.join(" "))}</div>`;
-  return `<div class="aviso ${dec.decaido ? "ok" : "warn"}">Fato gerador (conclusão): <b>${dataBR(dec.fg)}</b> · Início da contagem: <b>${dataBR(dec.inicio)}</b> ·
-    Prazo final: <b>${dataBR(dec.limite)}</b> · Referência do lançamento: <b>${dataBR(dec.referencia)}</b><br>${resumoDecadencia(dec)}</div>`;
+  return `<div class="aviso ${dec.decaido ? "ok" : "warn"}">Fato gerador (conclusão): <b>${conclusaoBR(dec)}</b>${dec.soAno ? " (só o ano)" : ""} · Início da contagem: <b>${dataBR(dec.inicio)}</b> ·
+    Prazo final: <b>${dataBR(dec.limite)}</b> · Referência do lançamento: <b>${dataBR(dec.referencia)}</b><br>${resumoDecadencia(dec)}` +
+    (dec.soAno && dec.fundamento === "150" ? `<br>Sem a data exata, o prazo do art. 150, § 4º, é contado de 31/12/${dec.fg.slice(0, 4)}, último dia do ano da conclusão.` : "") + `</div>`;
 }
 function tabelaDecadenciaDoc(dec) {
   if (!dec.analisada || dec.erros.length) return "";
   const L = (a, b) => `<tr><td>${a}</td><td class="num">${b}</td></tr>`;
   return `<h3>Decadência</h3><table class="resumo-doc">
     ${L("Fundamento", dec.fundamento === "150" ? "Art. 150, § 4º, CTN" : "Art. 173, I, CTN")}
-    ${L("Conclusão da obra (fato gerador)", dataBR(dec.fg))}${L("Início da contagem do prazo", dataBR(dec.inicio))}
+    ${L("Conclusão da obra (fato gerador)", dec.soAno ? `ano de ${conclusaoBR(dec)}` : conclusaoBR(dec))}${L("Início da contagem do prazo", dataBR(dec.inicio))}
     ${L("Prazo final para o lançamento", dataBR(dec.limite))}${L("Data de referência do lançamento", dataBR(dec.referencia))}
     ${L("Situação", dec.decaido ? "Decadência reconhecida" : "Não decaído")}</table>`;
 }
@@ -1895,12 +1910,12 @@ function textoParecerPadrao(p, res) {
   const dec = res.decadencia;
   const obra = res.demolicao ? "demolição" : "construção civil";
   const rel = [`Trata-se de análise da decadência do direito de a Fazenda Pública Municipal constituir o crédito tributário do Imposto Sobre Serviços de Qualquer Natureza – ISS incidente sobre os serviços de ${obra} realizados no imóvel situado em ${esc(p.endereco || "—")}, CCI ${esc(p.cci || "—")}, de interesse de ${esc(p.requerente || "—")}, CPF/CNPJ ${esc(p.documento || "—")}, com área de ${fmtNum(res.area)} m², para fins de expedição do Habite-se.`,
-    `Conforme ${esc(textoProvas(p))}, a obra foi concluída em ${dataBR(dec.fg)}.`];
+    `Conforme ${esc(textoProvas(p))}, a obra foi concluída ${conclusaoTexto(dec)}.`];
   const fund = ["Nos termos do art. 156, V, do Código Tributário Nacional, a decadência extingue o crédito tributário."];
   if (dec.fundamento === "150")
-    fund.push(`Havendo antecipação do pagamento e inexistindo dolo, fraude ou simulação, aplica-se o art. 150, § 4º, do CTN, segundo o qual o prazo para a homologação, e consequentemente para o lançamento de eventual diferença, é de 5 (cinco) anos contados da ocorrência do fato gerador. Considerando a conclusão da obra em ${dataBR(dec.fg)}, o prazo decadencial ${dec.decaido ? "encerrou-se" : "encerrar-se-á"} em ${dataBR(dec.limite)}.`);
+    fund.push(`Havendo antecipação do pagamento e inexistindo dolo, fraude ou simulação, aplica-se o art. 150, § 4º, do CTN, segundo o qual o prazo para a homologação, e consequentemente para o lançamento de eventual diferença, é de 5 (cinco) anos contados da ocorrência do fato gerador. ${dec.soAno ? `Não sendo possível identificar a data exata da conclusão da obra, ocorrida no ano de ${conclusaoBR(dec)}, considera-se o último dia desse ano (${dataBR(dec.fg)}), de modo que o prazo decadencial` : `Considerando a conclusão da obra em ${dataBR(dec.fg)}, o prazo decadencial`} ${dec.decaido ? "encerrou-se" : "encerrar-se-á"} em ${dataBR(dec.limite)}.`);
   else
-    fund.push(`Nos termos do art. 173, I, do CTN, o direito de a Fazenda Pública constituir o crédito tributário extingue-se após 5 (cinco) anos, contados do primeiro dia do exercício seguinte àquele em que o lançamento poderia ter sido efetuado. Considerando a conclusão da obra em ${dataBR(dec.fg)}, o prazo decadencial teve início em ${dataBR(dec.inicio)} e ${dec.decaido ? "encerrou-se" : "encerrar-se-á"} em ${dataBR(dec.limite)}.`);
+    fund.push(`Nos termos do art. 173, I, do CTN, o direito de a Fazenda Pública constituir o crédito tributário extingue-se após 5 (cinco) anos, contados do primeiro dia do exercício seguinte àquele em que o lançamento poderia ter sido efetuado. Considerando a conclusão da obra ${dec.soAno ? `no ano de ${conclusaoBR(dec)}` : `em ${dataBR(dec.fg)}`}, o prazo decadencial teve início em ${dataBR(dec.inicio)} e ${dec.decaido ? "encerrou-se" : "encerrar-se-á"} em ${dataBR(dec.limite)}.`);
   fund.push(dec.decaido
     ? `Assim, na data de referência do lançamento (${dataBR(dec.referencia)}), já havia transcorrido o prazo decadencial, de modo que o crédito tributário apurado, no valor de ${fmtBRL(res.issApurado)}, conforme memória de cálculo anexa, encontra-se extinto.`
     : `Assim, na data de referência do lançamento (${dataBR(dec.referencia)}), ainda não havia transcorrido o prazo decadencial, sendo possível a constituição do crédito tributário.`);

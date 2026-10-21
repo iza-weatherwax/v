@@ -126,6 +126,33 @@ test("decadência — data de referência própria e erros", () => {
   assert.equal(A.calcularDecadencia({ decAnalisar: false, fimObra: "2000-01-01" }).decaido, false);
 });
 
+test("decadência — só o ano da conclusão (data exata desconhecida)", () => {
+  // art. 173, I: só o ano importa
+  let d = A.calcularDecadencia({ decAnalisar: true, decFundamento: "173", fimObraSoAno: true, fimObraAno: "2020", fimObra: "2024-05-01", data: "2025-12-31" });
+  assert.equal(d.soAno, true);
+  assert.equal(d.inicio, "2021-01-01");
+  assert.equal(d.limite, "2025-12-31");
+  assert.equal(d.decaido, false);
+  assert.equal(A.calcularDecadencia({ decAnalisar: true, fimObraSoAno: true, fimObraAno: " 2020 ", data: "2026-01-01" }).decaido, true);
+  // art. 150, § 4º: conta de 31/12 do ano (a data mais tardia possível)
+  d = A.calcularDecadencia({ decAnalisar: true, decFundamento: "150", fimObraSoAno: true, fimObraAno: "2020", data: "2025-12-31" });
+  assert.equal(d.inicio, "2020-12-31");
+  assert.equal(d.limite, "2025-12-31");
+  assert.equal(d.decaido, false);
+  // obra concluída no mesmo ano do lançamento não é erro; ano posterior, ano inválido ou vazio, sim
+  assert.equal(A.calcularDecadencia({ decAnalisar: true, fimObraSoAno: true, fimObraAno: "2026", data: "2026-03-01" }).erros.length, 0);
+  assert.match(A.calcularDecadencia({ decAnalisar: true, fimObraSoAno: true, fimObraAno: "2027", data: "2026-03-01" }).erros.join(), /ano de conclusão da obra é posterior/);
+  for (const ano of ["", "12", "1850", "20a0"])
+    assert.match(A.calcularDecadencia({ decAnalisar: true, fimObraSoAno: true, fimObraAno: ano, data: "2026-03-01" }).erros.join(), /Informe o ano de conclusão/, ano);
+  // relatório CSV: só o ano na coluna da conclusão
+  const p = base({ processo: "6184/2025", area: 99, decAnalisar: true, fimObraSoAno: true, fimObraAno: "2012", data: "2026-08-13" });
+  const r = calc(p);
+  assert.equal(r.iss, 0);
+  const l = A.csvLinhaProcesso({ ...p, id: "x", fiscal: {} }, r);
+  assert.equal(l[A.CSV_COLUNAS.indexOf("Conclusão da obra")], "2012");
+  assert.equal(l[A.CSV_COLUNAS.indexOf("Prazo final para lançamento")], "31/12/2017");
+});
+
 test("decadência reconhecida zera o ISS a pagar e mantém o apurado", () => {
   const p = base({ processo: "6184/2025", area: 99, decAnalisar: true, decFundamento: "173", fimObra: "2018-05-01", data: "2026-08-13" });
   const r = calc(p);
