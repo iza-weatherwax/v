@@ -69,7 +69,9 @@ Para os casos calculados **somente pela área** (sem notas fiscais nem folha de 
 
 Com várias unidades, cada guia de ISS é comparada com o ISS da unidade correspondente, e a soma das guias com o ISS total (avisando se faltar guia para alguma unidade).
 
-Nada é enviado para a internet e nenhum processo é concluído automaticamente. Processos com número já existente no assistente são ignorados.
+Nada é enviado para a internet e nenhum processo é concluído automaticamente.
+
+**Processos que já existem no assistente** (em uso ou arquivados) são reconhecidos **pelo número no nome da pasta** e ignorados **sem ler os arquivos** (⚪ “Já existia — ignorado”). Assim, dá para juntar processos novos na mesma pasta dos antigos e mandar ler tudo de novo: só os novos são lidos. A pasta `5555-2026` corresponde ao processo 5555/2026; a pasta `5555` (sem ano) corresponde ao 5555 de qualquer ano. Pastas sem número no nome são lidas e, se o número tirado dos documentos já existir, também são ignoradas. Os processos 🔴 pulados (com nota fiscal ou folha) não viram processo no assistente e por isso são lidos de novo a cada lote, a menos que se crie o rascunho deles.
 
 A pasta `exemplos/lote-exemplo` tem 10 processos **fictícios** para experimentar (um de cada situação).
 

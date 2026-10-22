@@ -9,8 +9,8 @@ const html = readFileSync(new URL("../iss-construcao.html", import.meta.url), "u
 const bloco = id => html.match(new RegExp(`<script id="${id}">([\\s\\S]*?)<\\/script>`))[1];
 const M = vm.createContext({});
 vm.runInContext(bloco("motor") + "\n" + bloco("leitura") +
-  "\n;this.api={analisarProcesso,dobrar,parseArea,nomeValido,enderecosIguais,lerLinhaDigitavel,compararGuiaComIss,compararGuiasComIss,_mod10,datasAssinaturaPDF};", M);
-const { analisarProcesso, dobrar, parseArea, nomeValido, enderecosIguais, lerLinhaDigitavel, compararGuiaComIss, compararGuiasComIss, _mod10, datasAssinaturaPDF } = M.api;
+  "\n;this.api={analisarProcesso,dobrar,parseArea,nomeValido,enderecosIguais,lerLinhaDigitavel,compararGuiaComIss,compararGuiasComIss,_mod10,datasAssinaturaPDF,processoDaPasta,mesmoProcesso};", M);
+const { analisarProcesso, dobrar, parseArea, nomeValido, enderecosIguais, lerLinhaDigitavel, compararGuiaComIss, compararGuiasComIss, _mod10, datasAssinaturaPDF, processoDaPasta, mesmoProcesso } = M.api;
 const pdf = (nome, ...paginas) => ({ nome, situacao: "lido", paginas });
 
 const HABITE = `PREFEITURA MUNICIPAL DE ARAGUARI
@@ -432,4 +432,23 @@ test("Alvará de Legalização: construção antiga, decadência marcada e sem d
   assert.equal(r.dados.fimObra, undefined);
   assert.ok(r.narrativa.some(n => /Documento principal — Alvará de Habite-se: habite\.pdf \(pág\. 1\); Alvará de Legalização: legalizacao\.pdf/.test(n.msg)));
   assert.ok(r.narrativa.some(n => /Não foi usada como conclusão da obra/.test(n.msg)));
+});
+
+test("lote: número do processo pela pasta e processos que já existem", () => {
+  assert.equal(processoDaPasta("5555-2026"), "5555/2026");
+  assert.equal(processoDaPasta("Processo 0123_2025"), "123/2025");
+  assert.equal(processoDaPasta("5555"), "5555");
+  assert.equal(processoDaPasta("sem numero"), null);
+  // o número da pasta é o mesmo que a análise usa
+  for (const pasta of ["5555-2026", "5555", "Processo 0123_2025"]) {
+    const r = analisarProcesso(pasta, [pdf("habite-se.pdf", HABITE + "\nNº DO PROCESSO: 5555/2026")]);
+    assert.equal(r.dados.processo, processoDaPasta(pasta), pasta);
+  }
+  assert.equal(mesmoProcesso("5555/2026", "5555-2026"), true);
+  assert.equal(mesmoProcesso("05555/2026", "5555/2026"), true);
+  assert.equal(mesmoProcesso("5555", "5555/2026"), true);    // sem ano: vale qualquer ano
+  assert.equal(mesmoProcesso("5555/2025", "5555/2026"), false);
+  assert.equal(mesmoProcesso("5555/2026", "5556/2026"), false);
+  assert.equal(mesmoProcesso("5555/2026 (cópia)", "5555/2026"), false);
+  assert.equal(mesmoProcesso("", "5555"), false);
 });

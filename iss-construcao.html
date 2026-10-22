@@ -760,6 +760,22 @@ function _tipoArea(q) {
 }
 const RE_PROCESSO = /\bprocesso\b(?:\s+administrativo)?(?:\s+n[o°º.]*|\s+numero)?\s*[:\-]?\s*(\d{1,7})\s*[\/\-]\s*((?:19|20)\d{2})(?!\d)/g;
 const RE_PROCESSO_NOME = /(?:^|[^\d])(\d{1,7})\s*[\/\-_. ]\s*((?:19|20)\d{2})(?!\d)/;
+// Número do processo pelo nome da pasta: "5555-2026" → "5555/2026"; "5555" → "5555" (o ano vem dos documentos); sem número → null.
+function processoDaPasta(nome) {
+  const m = RE_PROCESSO_NOME.exec(nome || "");
+  if (m) return `${Number(m[1])}/${m[2]}`;
+  const d = /\d{1,7}/.exec(nome || "");
+  return d ? String(Number(d[0])) : null;
+}
+// Mesmo processo pelo número: "5555/2026" = "5555-2026" = "05555/2026"; sem o ano ("5555"), vale o de qualquer ano.
+function _chaveProcesso(s) {
+  const m = /^\s*(\d{1,7})\s*(?:[\/\-_. ]\s*((?:19|20)\d{2}))?\s*$/.exec(String(s || ""));
+  return m && { num: String(Number(m[1])), ano: m[2] || "" };
+}
+function mesmoProcesso(a, b) {
+  const x = _chaveProcesso(a), y = _chaveProcesso(b);
+  return !!(x && y && x.num === y.num && (!x.ano || !y.ano || x.ano === y.ano));
+}
 // Nome depois do rótulo, na mesma linha ou na linha seguinte.
 const RE_NOME_1 = /\b(?:nome do requerente|nome do proprietario|nome do interessado|requerente|proprietari[oa]s?|interessad[oa]|contribuinte|titular|concedid[oa] a|em favor de|outorgad[oa] a)\b(?:\s*\(a\))?[ \t]*[:\-][ \t]*(?:\n[ \t]*)?([^\n]{3,140})/g;
 const RE_NOME_2 = /\beu,?\s+([a-z][a-z' .\-]{4,90}?)\s*,\s*(?:brasileir|portador|inscrit|residente|cpf|rg\b|casad|solteir|viuv|divorciad)/g;
@@ -2737,6 +2753,13 @@ function criarDeLeitura(an, pasta, forcado) {
   db.processos[p.id] = p;
   return p;
 }
+// Item do lote para a pasta de um processo que já existe: nada é lido nem alterado.
+function itemJaExiste(g, num, p, arquivado) {
+  const msg = `Já existe o processo ${p.processo} no assistente${arquivado ? " (arquivado)" : ""}: a pasta não foi lida de novo e nada foi alterado.`;
+  return { pasta: g.nome, semaforo: "ignorado", processoId: p.id, alertas: [msg], avisos: [], dados: { processo: num }, guias: [],
+    narrativa: [{ t: "info", msg: `Número do processo pelo nome da pasta: ${num}.` }, { t: "info", msg }],
+    arquivos: g.arquivos.map(f => ({ nome: f.name, situacao: "nao_lido", paginas: 0, detalhe: "processo já existente" })) };
+}
 async function processarLote(files) {
   const { grupos, semDocumento } = agruparArquivos([...files]);
   if (!grupos.length) { toast("Nenhuma pasta com PDF, .docx ou .odt foi encontrada."); return; }
@@ -2746,6 +2769,10 @@ async function processarLote(files) {
   try {
     for (let i = 0; i < grupos.length; i++) {
       const g = grupos[i];
+      // Processo que já existe no assistente (pelo número no nome da pasta): os arquivos não são lidos de novo.
+      const numPasta = processoDaPasta(g.pasta);
+      const existe = numPasta && (Object.values(db.processos).find(p => mesmoProcesso(p.processo, numPasta)) || arq.find(p => mesmoProcesso(p.processo, numPasta)));
+      if (existe) { itens.push(itemJaExiste(g, numPasta, existe, !db.processos[existe.id])); continue; }
       estadoLote.msg = `Lendo ${i + 1} de ${grupos.length}: ${g.nome}…`; render();
       const arquivos = [], jaLidos = new Map();
       for (const f of g.arquivos.sort((a, b) => a.name.localeCompare(b.name, "pt-BR", { numeric: true })))
@@ -2753,11 +2780,12 @@ async function processarLote(files) {
       const an = analisarProcesso(g.pasta, arquivos);
       textosLote.set(g.nome, arquivos);
       const item = { pasta: g.nome, semaforo: an.semaforo, alertas: an.alertas, avisos: an.avisos, narrativa: an.narrativa, dados: an.dados, arquivos: an.arquivos, guias: an.guias };
-      const dup = an.dados.processo && Object.values(db.processos).find(p => p.processo === an.dados.processo);
-      const dupArq = !dup && an.dados.processo && arq.find(p => p.processo === an.dados.processo);
+      // Pasta sem número no nome: o processo existente só é reconhecido depois da leitura (número tirado dos documentos).
+      const dup = an.dados.processo && Object.values(db.processos).find(p => mesmoProcesso(p.processo, an.dados.processo));
+      const dupArq = !dup && an.dados.processo && arq.find(p => mesmoProcesso(p.processo, an.dados.processo));
       if (dup || dupArq) {
         item.semaforo = "ignorado"; item.processoId = (dup || dupArq).id;
-        item.alertas = [`Já existe o processo ${an.dados.processo} no assistente${dupArq ? " (arquivado)" : ""}; nada foi alterado.`];
+        item.alertas = [`Já existe o processo ${(dup || dupArq).processo} no assistente${dupArq ? " (arquivado)" : ""}; nada foi alterado.`];
       } else if (an.semaforo !== "vermelho") {
         const p = criarDeLeitura(an, g.nome, false);
         item.processoId = p.id; item.semaforo = p.leitura.semaforo; item.alertas = p.leitura.alertas;
@@ -2770,7 +2798,7 @@ async function processarLote(files) {
     salvar(true); render();
   }
   const c = s => itens.filter(i => i.semaforo === s).length;
-  toast(`Lote lido: ${c("verde")} simples, ${c("amarelo")} com atenção, ${c("vermelho")} pulados${c("ignorado") ? `, ${c("ignorado")} já existentes` : ""}` +
+  toast(`Lote lido: ${c("verde")} simples, ${c("amarelo")} com atenção, ${c("vermelho")} pulados${c("ignorado") ? `, ${c("ignorado")} já existentes (não lidos de novo)` : ""}` +
     `${semDocumento.length ? `; ${semDocumento.length} pasta(s) sem PDF/Word ignorada(s)` : ""}.`);
 }
 
