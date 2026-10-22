@@ -41,6 +41,8 @@ Para **ordenar a lista** (por exemplo, em ordem alfabética pelo requerente), cl
 6. **Checklist** — mostra pendências obrigatórias e as conferências documentais; o processo só pode ser concluído sem pendências.
 7. **Documentos** — memória de cálculo, decisão e, quando analisada, parecer de decadência (os textos da decisão e do parecer podem ser editados). Imprima ou salve em PDF pelo próprio navegador.
 
+O cálculo é refeito a cada alteração. O botão **↻ Recalcular**, no painel “Cálculo”, refaz tudo com o que está na tela — inclusive o resumo da **leitura automática** e a comparação com as guias de ISS, que guardam o cálculo do momento da leitura. Quando a área ou outro dado muda depois da leitura, o resumo avisa que está desatualizado.
+
 ## Leitura em lote (preenchimento automático)
 
 Para os casos calculados **somente pela área** (sem notas fiscais nem folha de pagamento):

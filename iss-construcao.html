@@ -1779,7 +1779,9 @@ function tabelaTerceiros(p) {
 }
 function painelResultado(p, res) {
   const linha = (a, b, cls = "") => `<div class="${cls}"><span>${a}</span><span>${b}</span></div>`;
-  return `<h2>Cálculo</h2>${res.erros.length ? `<div class="aviso err">${esc(res.erros.join(" "))}</div>` : ""}
+  return `<div class="acoes" style="justify-content:space-between;margin-bottom:8px"><h2 style="margin:0">Cálculo</h2>
+    <button class="btn peq" data-acao="recalcular" title="Refaz o cálculo, os documentos e o resumo da leitura automática com os dados que estão na tela">↻ Recalcular</button></div>
+    ${res.erros.length ? `<div class="aviso err">${esc(res.erros.join(" "))}</div>` : ""}
     <div class="resumo">
     ${res.unidades ? res.unidades.map(u => linha(`${esc(u.rotulo)} (${fmtNum(u.area)} m² × ${fmtBRL(u.valorM2)})`, fmtBRL(u.valor))).join("")
       : linha("Valor do m² (" + (res.ano || "—") + ")", fmtBRL(res.valorM2))}
@@ -2004,6 +2006,7 @@ function atualizarDerivados() {
   });
   const at = document.getElementById("areaTotalUnid"); if (at) at.value = fmtNum(res.area);
   p.propria.forEach((l, i) => { const td = document.querySelector(`[data-total-propria="${i}"]`); if (td) td.textContent = fmtBRL(totalLinhaPropria(l)); });
+  const al = document.getElementById("avisoCalcLeitura"); if (al) al.innerHTML = avisoCalcLeitura(p, res);
   const fp = document.getElementById("folhaPreview");
   if (fp && !(document.activeElement && document.activeElement.classList.contains("corpo-editavel")))
     fp.innerHTML = renderDoc(abaDoc, p, res, true);
@@ -2720,6 +2723,56 @@ function agruparArquivos(files) {
   return { grupos: lista.sort(ordem), semDocumento: semDocumento.sort(ordem) };
 }
 
+// Parte da leitura que depende do cálculo: o resumo do cálculo e a comparação com as guias de ISS.
+// Fica marcada (calc) para ser refeita pelo botão "Recalcular" quando os dados do processo mudam.
+function calculoDaLeitura(res, guias) {
+  const narrativa = [], alertas = [];
+  const add = (t, msg) => { narrativa.push({ t, msg, calc: true }); if (t === "alerta") alertas.push(msg); };
+  if (res.erros.length) res.erros.forEach(e => add("alerta", e));
+  else if (res.area > 0) add("info", (res.unidades ? `Cálculo por unidade (tabela de ${res.ano}): ${descreverUnidades(res)}; total ${fmtBRL(res.valorImovel)}`
+    : `Cálculo: tabela de ${res.ano}, faixa “${res.categoriaNome}” (${fmtBRL(res.valorM2)}/m²) × ${fmtNum(res.area)} m² = ${fmtBRL(res.valorImovel)}`) +
+    (res.demolicao ? `; base reduzida a ${fmtPct(res.percBC)} = ${fmtBRL(res.base)}` : "") + `; alíquota ${fmtPct(res.aliquota)} → ISS de ${fmtBRL(res.issApurado)}` + (res.decaido ? `; com a decadência, ISS a pagar de ${fmtBRL(0)}.` : "."));
+  if (guias.length && !res.erros.length && res.area > 0) {
+    // ISS de cada unidade (cálculo só pela área): para reconhecer guias emitidas por unidade.
+    const unidIss = (res.unidades || []).map(u => ({ rotulo: u.rotulo, iss: r2(r2(u.valor * res.percBC / 100) * res.aliquota / 100) }));
+    for (const c of compararGuiasComIss(guias, res.iss, unidIss)) add(c.t, c.msg);
+  }
+  return { narrativa, alertas };
+}
+const resumoCalculo = res => ({ sig: assinaturaResultado(res), area: res.area, iss: res.iss });
+// Mensagens do cálculo em leituras salvas antes da marcação (calc).
+const RE_MSG_CALCULO = /^Cálculo\b|ISS (?:total )?que deveria ser pago|corresponde ao ISS da unidade|Sem guia:|^Não há valores cadastrados na tabela|^Ano de referência não identificado/;
+// Refaz, no resumo da leitura, o cálculo e a comparação com as guias, com os dados atuais do processo.
+function refazerCalculoLeitura(p, res) {
+  const l = p.leitura, doCalc = n => n.calc || RE_MSG_CALCULO.test(n.msg);
+  const calc = calculoDaLeitura(res, l.guias || []);
+  calc.narrativa.unshift({ t: "info", msg: `Cálculo refeito em ${new Date().toLocaleString("pt-BR")} com os dados atuais do processo.`, calc: true });
+  const pos = l.narrativa.findIndex(doCalc), resto = l.narrativa.filter(n => !doCalc(n));
+  const ins = pos < 0 ? Math.max(0, resto.length - 2) : l.narrativa.slice(0, pos).filter(n => !doCalc(n)).length;
+  l.narrativa = [...resto.slice(0, ins), ...calc.narrativa, ...resto.slice(ins)];
+  const velhos = new Set(l.alertasCalc || []);
+  l.alertas = [...l.alertas.filter(a => !velhos.has(a) && !RE_MSG_CALCULO.test(a)), ...calc.alertas];
+  l.alertasCalc = calc.alertas;
+  l.calculo = resumoCalculo(res);
+}
+// Aviso no cartão da leitura quando os dados mudaram depois do cálculo que está nele.
+function avisoCalcLeitura(p, res) {
+  const c = p.leitura && p.leitura.calculo;
+  if (!c || c.sig === assinaturaResultado(res)) return "";
+  return `<div class="aviso warn">O resumo abaixo foi calculado com ${fmtNum(c.area || 0)} m² (ISS de ${fmtBRL(c.iss || 0)}); com os dados atuais, o cálculo é de ${fmtNum(res.area || 0)} m² (ISS de ${fmtBRL(res.iss || 0)}), como mostra o painel “Cálculo”.
+    <button class="btn peq pri" data-acao="recalcular">↻ Recalcular</button> para atualizar o resumo e a comparação com as guias.</div>`;
+}
+// Tudo o que está na tela vale: os campos são lidos de novo antes de recalcular.
+function lerCamposDaTela(p) {
+  document.querySelectorAll("#app input[data-f], #app textarea[data-f]").forEach(t => {
+    if (t.type === "checkbox" || t.disabled) return;
+    setPath(p, t.dataset.f, t.dataset.num !== undefined ? parseNum(t.value) : t.value);
+  });
+  document.querySelectorAll("#app input[data-l]").forEach(t => {
+    const l = p[t.dataset.l] && p[t.dataset.l][Number(t.dataset.i)];
+    if (l && t.type !== "checkbox" && !t.disabled) l[t.dataset.c] = t.dataset.num !== undefined ? parseNum(t.value) : t.value;
+  });
+}
 function criarDeLeitura(an, pasta, forcado) {
   const p = novoProcesso();
   for (const k of ["processo", "anoManual", "requerente", "documento", "cci", "endereco", "area", "unidades", "tipoObra", "categoria", "fimObra", "decAnalisar"]) if (an.dados[k] !== undefined) p[k] = an.dados[k];
@@ -2727,27 +2780,16 @@ function criarDeLeitura(an, pasta, forcado) {
   const alertas = an.alertas.slice();
   const narrativa = an.narrativa.slice(0, -1), conclusao = an.narrativa[an.narrativa.length - 1];
   let semaforo = an.semaforo;
-  const res = resultado(p);
-  if (res.erros.length) {
-    alertas.push(...res.erros); res.erros.forEach(e => narrativa.push({ t: "alerta", msg: e }));
-    if (semaforo === "verde") semaforo = "amarelo";
-  } else if (p.area) {
-    narrativa.push({ t: "info", msg: (res.unidades ? `Cálculo por unidade (tabela de ${res.ano}): ${descreverUnidades(res)}; total ${fmtBRL(res.valorImovel)}`
-      : `Cálculo: tabela de ${res.ano}, faixa “${res.categoriaNome}” (${fmtBRL(res.valorM2)}/m²) × ${fmtNum(res.area)} m² = ${fmtBRL(res.valorImovel)}`) +
-      (res.demolicao ? `; base reduzida a ${fmtPct(res.percBC)} = ${fmtBRL(res.base)}` : "") + `; alíquota ${fmtPct(res.aliquota)} → ISS de ${fmtBRL(res.issApurado)}` + (res.decaido ? `; com a decadência, ISS a pagar de ${fmtBRL(0)}.` : ".") });
-  }
-  if ((an.guias || []).length && !res.erros.length && res.area > 0) {
-    // ISS de cada unidade (cálculo só pela área): para reconhecer guias emitidas por unidade.
-    const unidIss = (res.unidades || []).map(u => ({ rotulo: u.rotulo, iss: r2(r2(u.valor * res.percBC / 100) * res.aliquota / 100) }));
-    for (const c of compararGuiasComIss(an.guias, res.iss, unidIss)) { narrativa.push(c); if (c.t === "alerta") alertas.push(c.msg); }
-  }
-
+  const res = resultado(p), calc = calculoDaLeitura(res, an.guias || []);
+  narrativa.push(...calc.narrativa); alertas.push(...calc.alertas);
+  if (res.erros.length && semaforo === "verde") semaforo = "amarelo";
 
   if (res.erros.length && conclusao.t === "ok") narrativa.push({ t: "alerta", msg: "Resultado: precisa de atenção (o cálculo não pôde ser feito)." });
   else narrativa.push(conclusao);
   if (forcado) narrativa.push({ t: "alerta", msg: "Rascunho criado a pedido do fiscal, apesar dos indícios de nota fiscal ou folha. A pergunta sobre mão de obra ficou sem resposta." });
   narrativa.push({ t: "info", msg: "Documentos gerados como rascunho. O processo só é concluído pelo fiscal." });
-  p.leitura = { em: Date.now(), pasta, semaforo, alertas, avisos: an.avisos || [], narrativa, arquivos: an.arquivos, guias: an.guias || [] };
+  p.leitura = { em: Date.now(), pasta, semaforo, alertas, avisos: an.avisos || [], narrativa, arquivos: an.arquivos, guias: an.guias || [],
+    alertasCalc: calc.alertas, calculo: resumoCalculo(res) };
   db.processos[p.id] = p;
   return p;
 }
@@ -2847,10 +2889,11 @@ function vistaLote() {
     ${lote.semDocumento && lote.semDocumento.length ? `<p class="muted">Pastas ignoradas por não terem PDF, .docx ou .odt: ${lote.semDocumento.map(esc).join(", ")}.</p>` : ""}</div>` : ""}`;
 }
 function cardLeitura(p) {
-  const l = p.leitura;
+  const l = p.leitura, aviso = avisoCalcLeitura(p, resultado(p));
   return `<div class="card leitura ${l.semaforo}"><div class="acoes" style="justify-content:space-between">
       <h2 style="margin:0">Leitura automática ${seloSemaforo(l.semaforo)} ${seloGuia(l.guias)}</h2>
       <span class="muted">Pasta “${esc(l.pasta)}” · ${new Date(l.em).toLocaleString("pt-BR")}</span></div>
+    <div id="avisoCalcLeitura">${aviso}</div>
     ${l.alertas.length ? `<div class="aviso warn"><b>Confira:</b><ul class="alertas">${l.alertas.map(a => `<li>${esc(a)}</li>`).join("")}</ul></div>`
       : `<div class="aviso ok">Nenhum alerta. Confira os dados e conclua.</div>`}
     ${avisosHTML(l.avisos)}
@@ -2868,6 +2911,14 @@ function docLeitura(p) {
 
 // Ações e eventos da leitura em lote
 Object.assign(acoes, {
+  recalcular() {
+    const p = proc(); if (!p) return;
+    if (p.status !== "concluido") lerCamposDaTela(p);
+    const res = resultado(p);
+    if (p.leitura) refazerCalculoLeitura(p, res);
+    tocar(p); render();
+    toast(res.erros.length ? "Não foi possível calcular: " + res.erros.join(" ") : `Recalculado: ${fmtNum(res.area)} m² → ISS a pagar de ${fmtBRL(res.iss)}.`);
+  },
   forcarLote(el) {
     const it = db.lote.itens[Number(el.dataset.k)];
     if (!confirm("Criar rascunho deste processo mesmo com indícios de nota fiscal ou folha? As deduções terão de ser lançadas pelo fiscal.")) return;
