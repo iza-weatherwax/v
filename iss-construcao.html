@@ -445,6 +445,14 @@ function nomeArquivoJson(p, todos = []) {
   return `processo-${base}${repetido ? `-${id}` : ""}.json`;
 }
 
+// Número do processo para o AP: "NNNN/AAAA". Sem o ano no número (ex.: pasta "5555"), usa o ano de referência.
+function processoNoAP(p) {
+  const s = String(p.processo || ""), m = /(\d{1,7})\s*[\/\-]\s*((?:19|20)\d{2})(?!\d)/.exec(s);
+  if (m) return `${Number(m[1])}/${m[2]}`;
+  const n = /\d{1,7}/.exec(s), ano = anoReferencia(p);
+  return n && ano ? `${Number(n[0])}/${ano}` : s;
+}
+
 // ---------- CSV (separador ";", decimal com vírgula, UTF-8 com BOM) ----------
 const CSV_COLUNAS = [
   "ID", "Processo", "Ano referência", "Data do cálculo", "Situação", "Requerente", "CPF/CNPJ", "CCI",
@@ -2125,11 +2133,53 @@ let pastaJson = null, pastaOk = false, _tJson = null, _filaJson = Promise.resolv
 const pastaGet = () => idb("readonly", s => s.get("pastaJson")).catch(() => null);
 const pastaSet = h => idb("readwrite", s => h ? s.put(h, "pastaJson") : s.delete("pastaJson")).catch(() => null);
 const _hashTexto = t => { let h = 0x811c9dc5; for (let i = 0; i < t.length; i++) h = Math.imul(h ^ t.charCodeAt(i), 16777619); return (h >>> 0).toString(36) + "-" + t.length.toString(36); };
-// O processo completo (o mesmo do backup, pode ser importado de volta) e um resumo com as colunas do relatório CSV.
+// No topo, os campos do AP (formato ap-assistente/1); depois, os do próprio assistente, que o AP desconsidera:
+// um resumo com as colunas do relatório CSV e o processo completo em "dados" (pode ser importado de volta).
 function conteudoJson(p, arquivado) {
-  const linha = csvLinhaProcesso(p, resultado(p), fiscalDe(p));
-  return JSON.stringify({ versao: 1, tipo: "processo-iss-construcao", arquivado: !!arquivado,
-    resumo: Object.fromEntries(CSV_COLUNAS.map((c, i) => [c, linha[i]])), processo: p }, null, 1);
+  const res = resultado(p), linha = csvLinhaProcesso(p, res, fiscalDe(p));
+  return JSON.stringify({
+    formato: "ap-assistente/1",
+    assistente: { id: "iss-construcao", nome: "ISS Construção - Habite-se" },
+    status: p.status === "concluido" ? "concluido" : "rascunho",
+    processo: processoNoAP(p),
+    requerente: { nome: p.requerente || "", documento: p.documento || "" },
+    documentos: documentosNoAP(p, res),
+    versao: 1, tipo: "processo-iss-construcao", arquivado: !!arquivado,
+    resumo: Object.fromEntries(CSV_COLUNAS.map((c, i) => [c, linha[i]])), dados: p }, null, 1);
+}
+// Documentos para o AP. A chave não muda nunca: reimportar atualiza o documento da mesma chave. html null = não se aplica.
+function documentosNoAP(p, res) {
+  const texto = (tipo, padrao) => htmlParaAP(p[EDITAVEIS[tipo]] ? p[EDITAVEIS[tipo]].html : padrao(p, res));
+  return [
+    { chave: "decisao", tipo: "Despacho Decisório", html: texto("decisao", textoDecisaoPadrao) },
+    { chave: "parecer", tipo: "Parecer", html: p.decAnalisar ? texto("parecer", textoParecerPadrao) : null },
+    { chave: "memoria", tipo: "Outro", nome: "Memória de cálculo", html: htmlParaAP(docMemoria(p, res)) }
+  ];
+}
+// Só o corpo do documento: sem cabeçalho, título, local e data e assinatura (o AP põe os dele), e só as marcações
+// que o AP aceita (h3, p, b, i, u, br, listas e tabelas), sem classes nem estilos. Títulos de seção viram <h3>.
+const _TAGS_AP = new Set(["H3", "P", "B", "I", "U", "BR", "UL", "OL", "LI", "TABLE", "THEAD", "TBODY", "TFOOT", "TR", "TH", "TD"]);
+const _TROCA_AP = { H1: "H3", H2: "H3", H4: "H3", H5: "H3", H6: "H3", STRONG: "B", EM: "I" };
+function htmlParaAP(html) {
+  const d = document.createElement("div");
+  d.innerHTML = html;
+  d.querySelectorAll(".cab, h2.titulo, p.local, .assin, img, script, style").forEach(e => e.remove());
+  const limpar = el => {
+    for (const n of [...el.childNodes]) {
+      if (n.nodeType === 8) { n.remove(); continue; }
+      if (n.nodeType !== 1) continue;
+      limpar(n);
+      let tag = _TROCA_AP[n.tagName] || n.tagName;
+      // Bloco do texto editado no navegador (<div>): parágrafo, se só tiver texto; senão, sai e fica o conteúdo.
+      if (tag === "DIV" || tag === "SECTION") tag = n.querySelector("p, h3, table, ul, ol, li") ? "" : "P";
+      if (!_TAGS_AP.has(tag)) { n.replaceWith(...n.childNodes); continue; }
+      const novo = tag === n.tagName ? n : document.createElement(tag);
+      if (novo !== n) { novo.append(...n.childNodes); n.replaceWith(novo); }
+      for (const a of [...novo.attributes]) if (!(["colspan", "rowspan"].includes(a.name) && /^T[HD]$/.test(tag))) novo.removeAttribute(a.name);
+    }
+  };
+  limpar(d);
+  return d.innerHTML.replace(/>\s+</g, "><").trim();
 }
 async function iniciarPastaJson() {
   if (!temPasta || !(pastaJson = await pastaGet())) return;
@@ -2467,8 +2517,9 @@ async function importarBackup(files) {
     for (const f of files) {
       let x;
       try { x = JSON.parse(await f.text()); } catch (e) { throw new Error(`“${f.name}” não é um arquivo .json válido`); }
-      if (x.tipo === "processo-iss-construcao" && x.processo && x.processo.id) {
-        if (x.arquivado) d.arquivados.push(x.processo); else d.processos[x.processo.id] = x.processo;
+      const proc = x.tipo === "processo-iss-construcao" && (x.dados || (typeof x.processo === "object" ? x.processo : null));
+      if (proc && proc.id) {
+        if (x.arquivado) d.arquivados.push(proc); else d.processos[proc.id] = proc;
       } else if (x.processos) {
         Object.assign(d.processos, x.processos); d.arquivados.push(...(x.arquivados || [])); d.config = x.config || d.config;
       } else throw new Error(`“${f.name}” não é um backup nem um .json de processo`);

@@ -7,7 +7,7 @@ import vm from "node:vm";
 const html = readFileSync(new URL("../iss-construcao.html", import.meta.url), "utf8");
 const codigo = html.match(/<script id="motor">([\s\S]*?)<\/script>/)[1];
 const M = vm.createContext({});
-vm.runInContext(codigo + "\n;this.api={calcular,TABELA_PADRAO,extensoReais,parseNum,anoDoProcesso,categoriaPorArea,parseCSV,montarCSV,mesclarCSV,csvLinhaProcesso,cpfValido,cnpjValido,r2,calcularDecadencia,somarAnos,CSV_COLUNAS,nomeArquivoJson};", M);
+vm.runInContext(codigo + "\n;this.api={calcular,TABELA_PADRAO,extensoReais,parseNum,anoDoProcesso,categoriaPorArea,parseCSV,montarCSV,mesclarCSV,csvLinhaProcesso,cpfValido,cnpjValido,r2,calcularDecadencia,somarAnos,CSV_COLUNAS,nomeArquivoJson,processoNoAP};", M);
 const A = M.api;
 const base = (x) => ({ processo: "", anoManual: "", tipoObra: "construcao", categoria: "auto", area: 0, temMaoDeObra: false,
   usaPropria: false, usaTerceiros: false, propria: [], terceiros: [], ...x });
@@ -198,4 +198,12 @@ test("nome do .json de cada processo", () => {
   // mesmo número em outro processo: o início do ID entra no nome
   assert.equal(A.nomeArquivoJson(p, [p, { id: "ffff9999-1", processo: "6184/2025" }]), "processo-6184-2025-a1b2c3d4.json");
   assert.equal(A.nomeArquivoJson(p, [p, { id: "ffff9999-1", processo: "6185/2025" }]), "processo-6184-2025.json");
+});
+
+test("número do processo no formato do AP (NNNN/AAAA)", () => {
+  assert.equal(A.processoNoAP({ processo: "283/2026" }), "283/2026");
+  assert.equal(A.processoNoAP({ processo: "0283-2026" }), "283/2026");
+  assert.equal(A.processoNoAP({ processo: "5555", anoManual: "2025" }), "5555/2025");   // pasta só com o número
+  assert.equal(A.processoNoAP({ processo: "6184/2025 (cópia)" }), "6184/2025");
+  assert.equal(A.processoNoAP({ processo: "6184/2025", anoManual: "2024" }), "6184/2025"); // o ano do número vale
 });
