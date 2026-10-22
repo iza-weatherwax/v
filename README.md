@@ -10,12 +10,22 @@ Assistente para o cálculo do ISS sobre construção civil e demolição (Aragua
 
 Os processos ficam salvos **no próprio navegador do computador** em que foram feitos. Use **Processos → Exportar backup** com frequência; o backup também serve para levar os processos para outro computador (**Importar backup**).
 
+### Um arquivo .json por processo
+
+Em **Processos → Um arquivo .json por processo → Escolher pasta…** (Chrome ou Edge), cada processo passa a ser gravado nessa pasta num arquivo próprio — `processo-6184-2025.json`, ou `processo-sem-numero-….json` enquanto não tiver número — **atualizado automaticamente a cada alteração**.
+
+- O arquivo traz um **resumo** (as mesmas colunas do relatório CSV: requerente, área, ISS, decadência…) e o **processo completo**, que pode ser importado de volta (**Importar backup ou .json de processos** aceita vários arquivos de uma vez).
+- Se o número do processo mudar, o arquivo é renomeado. Dois processos com o mesmo número recebem o início do código interno no nome, para um não sobrescrever o outro — inclusive se a pasta for compartilhada entre computadores.
+- Arquivar marca o arquivo como arquivado; **excluir não apaga o arquivo** (ele fica como cópia).
+- O navegador pede permissão para gravar na pasta cada vez que o assistente é aberto: aparece um aviso com o botão **Permitir gravação**. Enquanto não for permitido, os arquivos não são atualizados (os processos continuam salvos no navegador).
+- Em outros navegadores, use **Baixar .json** dentro de cada processo.
+
 ### Arquivar e excluir
 
 Na lista de **Processos**, marque um ou vários processos (ou use “Arquivar todos os concluídos”):
 
 - **Arquivar** tira o processo da lista de uso e da memória principal — o assistente continua rápido mesmo com muitos processos. Os arquivados ficam na aba **Arquivados**, de onde podem ser restaurados, e continuam no relatório CSV e no backup.
-- **Excluir** remove o processo definitivamente (linhas já gravadas no relatório CSV não são apagadas).
+- **Excluir** remove o processo definitivamente (linhas já gravadas no relatório CSV e arquivos .json já gravados na pasta não são apagados).
 
 Para **ordenar a lista** (por exemplo, em ordem alfabética pelo requerente), clique no título da coluna — Processo, Requerente, Obra, Área, ISS, Situação ou Data; clique de novo para inverter. Acentos e maiúsculas não atrapalham a ordem alfabética, números de processo ficam em ordem numérica e a ordem escolhida fica salva.
 

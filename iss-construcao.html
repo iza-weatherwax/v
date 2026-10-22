@@ -144,7 +144,7 @@ table.dados.lote tr.det td{border-bottom:2px solid var(--line);padding-top:0}
 <main id="app"></main>
 <div id="impressao"></div>
 <div id="toast"></div>
-<input type="file" id="arquivoBackup" accept=".json,application/json" hidden>
+<input type="file" id="arquivoBackup" accept=".json,application/json" multiple hidden>
 
 <!-- ======================= MOTOR DE CÁLCULO (puro, testável) ======================= -->
 <script id="motor">
@@ -432,6 +432,17 @@ function extensoReais(valor) {
   }
   if (cent > 0) partes.push(_inteiroExtenso(cent) + (cent === 1 ? " centavo" : " centavos"));
   return partes.join(" e ");
+}
+
+// ---------- Um .json por processo ----------
+// Nome do arquivo: "processo-6184-2025.json"; sem número, "processo-sem-numero-<início do ID>.json".
+// Se outro processo tiver o mesmo número, o início do ID entra no nome, para um não sobrescrever o outro.
+function nomeArquivoJson(p, todos = []) {
+  const num = String(p.processo || "").trim(), id = String(p.id || "").slice(0, 8);
+  const base = num.replace(/[\/\\]/g, "-").replace(/[:*?"<>|\u0000-\u001f]/g, "").replace(/\s+/g, " ").replace(/[. ]+$/, "");
+  if (!base) return `processo-sem-numero-${id}.json`;
+  const repetido = todos.some(q => q.id !== p.id && String(q.processo || "").trim() === num);
+  return `processo-${base}${repetido ? `-${id}` : ""}.json`;
 }
 
 // ---------- CSV (separador ";", decimal com vírgula, UTF-8 com BOM) ----------
@@ -1334,6 +1345,7 @@ function carregar() {
       db.processos = d.processos || {};
       db.config = Object.assign(structuredClone(CONFIG_PADRAO), d.config || {});
       db.config.fiscal = Object.assign({}, CONFIG_PADRAO.fiscal, (d.config || {}).fiscal || {});
+      db.jsonArquivos = d.jsonArquivos || {};
     }
   } catch (e) { armazenamentoOk = false; }
   if (!db.config.tabela) db.config.tabela = structuredClone(TABELA_PADRAO);
@@ -1358,11 +1370,12 @@ function fiscalDe(p) {
 let _tSalvar = null;
 function salvar(imediato) {
   clearTimeout(_tSalvar);
-  const f = () => {
-    try { localStorage.setItem(CHAVE, JSON.stringify(db)); armazenamentoOk = true; }
-    catch (e) { armazenamentoOk = false; toast("Não foi possível salvar no navegador. Exporte um backup!"); }
-  };
+  const f = () => { gravarLocal(); agendarJson(); };
   if (imediato) f(); else _tSalvar = setTimeout(f, 300);
+}
+function gravarLocal() {
+  try { localStorage.setItem(CHAVE, JSON.stringify(db)); armazenamentoOk = true; }
+  catch (e) { armazenamentoOk = false; toast("Não foi possível salvar no navegador. Exporte um backup!"); }
 }
 
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -1466,7 +1479,9 @@ function ir(v, id) {
 }
 function render() {
   const app = document.getElementById("app");
-  const avisoArm = armazenamentoOk ? "" : `<div class="aviso err">O navegador não está permitindo salvar dados localmente. Use “Exportar backup” para não perder o trabalho.</div>`;
+  const avisoArm = (armazenamentoOk ? "" : `<div class="aviso err">O navegador não está permitindo salvar dados localmente. Use “Exportar backup” para não perder o trabalho.</div>`) +
+    (pastaJson && !pastaOk ? `<div class="aviso warn">Os arquivos .json dos processos não estão sendo gravados na pasta “${esc(pastaJson.name)}”: o navegador pede permissão cada vez que o assistente é aberto.
+      <button class="btn peq pri" data-acao="jsonPermitir">Permitir gravação</button></div>` : "");
   if (vista === "editor" && proc()) app.innerHTML = avisoArm + vistaEditor(proc());
   else if (vista === "tabela") app.innerHTML = avisoArm + vistaTabela();
   else if (vista === "config") app.innerHTML = avisoArm + vistaConfig();
@@ -1556,10 +1571,16 @@ function vistaLista() {
       : `<p class="muted">${filtro ? "Nenhum processo encontrado." : arq ? (arquivados === null ? "Carregando…" : "Nenhum processo arquivado.") : "Nenhum processo em uso. Clique em “Novo processo” ou use a “Leitura em lote”."}</p>`}
     ${arq && arquivados && arquivados.length ? `<div class="acoes" style="margin-top:12px"><button class="btn" data-acao="baixarArquivados">Baixar arquivados (.json)</button></div>` : ""}
   </div>
+  <div class="card"><h2>Um arquivo .json por processo</h2>
+    ${temPasta ? `<p class="muted" style="margin-top:0">Escolha uma pasta: cada processo é gravado nela num arquivo próprio (ex.: <code>processo-6184-2025.json</code>), atualizado automaticamente a cada alteração. Os arquivados também ficam lá, marcados como arquivados. Excluir um processo não apaga o arquivo dele.</p>
+      <div class="aviso ${pastaJson ? (pastaOk ? "ok" : "warn") : "info"}">${pastaJson ? `Pasta vinculada: <b>${esc(pastaJson.name)}</b>${pastaOk ? "" : " — falta permitir a gravação"}` : "Nenhuma pasta vinculada."}</div>
+      <div class="acoes"><button class="btn pri" data-acao="jsonEscolherPasta">${pastaJson ? "Trocar pasta…" : "Escolher pasta…"}</button>
+      ${pastaJson ? `<button class="btn" data-acao="jsonGravarTodos">Gravar todos agora</button><button class="btn perigo" data-acao="jsonDesvincular">Desvincular</button>` : ""}</div>`
+      : `<div class="aviso warn" style="margin-top:0">Este navegador não permite gravar numa pasta. Use o Chrome ou o Edge para a gravação automática; aqui, use “Baixar .json” dentro de cada processo.</div>`}</div>
   <div class="card"><h2>Cópia de segurança</h2>
-    <p class="muted" style="margin-top:0">Os processos ficam salvos apenas neste navegador, neste computador. Exporte um backup periodicamente (inclui os arquivados) — ele também serve para levar os processos para outro computador.</p>
+    <p class="muted" style="margin-top:0">Os processos ficam salvos apenas neste navegador, neste computador. Exporte um backup periodicamente (inclui os arquivados) — ele também serve para levar os processos para outro computador. A importação aceita o backup e também os arquivos .json de processos (vários de uma vez).</p>
     <div class="acoes"><button class="btn" data-acao="exportar">Exportar backup (.json)</button>
-    <button class="btn" data-acao="importar">Importar backup</button></div></div>`;
+    <button class="btn" data-acao="importar">Importar backup ou .json de processos</button></div></div>`;
 }
 
 // ---------- Editor ----------
@@ -1676,6 +1697,7 @@ function vistaEditor(p) {
       <button class="btn" data-nav="lista">← Processos</button>
       <span class="selo ${p.status}">${bloqueado ? "Concluído" : "Rascunho"}</span>
       <b>${esc(p.processo || "Novo processo")}</b>
+      <button class="btn peq" data-acao="baixarJson" style="margin-left:auto">Baixar .json</button>
     </div>
     ${bloqueado ? `<div class="aviso ok">Processo concluído em ${new Date(p.concluidoEm).toLocaleString("pt-BR")}. Os valores da tabela foram congelados. Para alterar, clique em “Reabrir para edição”.</div>` : ""}
     ${p.leitura ? cardLeitura(p) : ""}
@@ -2078,6 +2100,74 @@ async function gravarCSV(processos, remover = []) {
 }
 const TIPO_CSV = [{ description: "Relatório CSV", accept: { "text/csv": [".csv"] } }];
 
+// ---------- Um .json por processo, numa pasta vinculada (Chrome/Edge) ----------
+// A pasta fica no IndexedDB ("kv"/"pastaJson"). db.jsonArquivos guarda, por processo, o nome do arquivo e a impressão
+// digital do último conteúdo gravado: só o que mudou é regravado, e o arquivo antigo sai quando o número do processo muda.
+const temPasta = "showDirectoryPicker" in window;
+let pastaJson = null, pastaOk = false, _tJson = null, _filaJson = Promise.resolve();
+const pastaGet = () => idb("readonly", s => s.get("pastaJson")).catch(() => null);
+const pastaSet = h => idb("readwrite", s => h ? s.put(h, "pastaJson") : s.delete("pastaJson")).catch(() => null);
+const _hashTexto = t => { let h = 0x811c9dc5; for (let i = 0; i < t.length; i++) h = Math.imul(h ^ t.charCodeAt(i), 16777619); return (h >>> 0).toString(36) + "-" + t.length.toString(36); };
+// O processo completo (o mesmo do backup, pode ser importado de volta) e um resumo com as colunas do relatório CSV.
+function conteudoJson(p, arquivado) {
+  const linha = csvLinhaProcesso(p, resultado(p), fiscalDe(p));
+  return JSON.stringify({ versao: 1, tipo: "processo-iss-construcao", arquivado: !!arquivado,
+    resumo: Object.fromEntries(CSV_COLUNAS.map((c, i) => [c, linha[i]])), processo: p }, null, 1);
+}
+async function iniciarPastaJson() {
+  if (!temPasta || !(pastaJson = await pastaGet())) return;
+  try { pastaOk = await pastaJson.queryPermission({ mode: "readwrite" }) === "granted"; } catch (e) { pastaOk = false; }
+  render();
+  agendarJson();
+}
+function agendarJson() {
+  if (!pastaJson || !pastaOk) return;
+  clearTimeout(_tJson);
+  _tJson = setTimeout(() => filaJson(() => gravarJson()), 400);
+}
+// Uma gravação de cada vez, na ordem pedida.
+function filaJson(fn) {
+  const r = _filaJson.then(fn);
+  _filaJson = r.catch(() => {});
+  return r.catch(e => {
+    if (e && e.name === "NotAllowedError") { pastaOk = false; render(); }
+    else toast("Erro ao gravar o .json do processo: " + (e && e.message));
+    return 0;
+  });
+}
+// Grava os pares [processo, arquivado] cujo conteúdo mudou (todos, se `forcar`); sem lista, os processos em uso.
+async function gravarJson(pares, forcar = false) {
+  if (!pastaJson || !pastaOk) return 0;
+  const arq = arquivados === null ? await carregarArquivados() : arquivados;
+  const todos = [...Object.values(db.processos), ...arq];
+  const reg = db.jsonArquivos || (db.jsonArquivos = {});
+  let n = 0;
+  for (const [p, arquivado] of pares || Object.values(db.processos).map(p => [p, false])) {
+    const texto = conteudoJson(p, arquivado), h = _hashTexto(texto), ant = reg[p.id];
+    let nome = nomeArquivoJson(p, todos);
+    if (!forcar && ant && ant.nome === nome && ant.h === h) continue;
+    // Nome novo para este processo: não sobrescreve o arquivo de outro processo (de outro computador, na mesma pasta).
+    if ((!ant || ant.nome !== nome) && ![null, p.id].includes(await idDoArquivoJson(nome))) nome = nome.replace(/\.json$/, `-${p.id.slice(0, 8)}.json`);
+    const fh = await pastaJson.getFileHandle(nome, { create: true });
+    const w = await fh.createWritable(); await w.write(texto); await w.close();
+    // O número do processo mudou: sai o arquivo com o nome antigo (se não for o de outro processo).
+    if (ant && ant.nome !== nome && !Object.entries(reg).some(([id, r]) => id !== p.id && r.nome === ant.nome))
+      await pastaJson.removeEntry(ant.nome).catch(() => {});
+    reg[p.id] = { nome, h }; n++;
+  }
+  if (n) gravarLocal();
+  return n;
+}
+// ID do processo gravado num arquivo da pasta (null se o arquivo não existe; "?" se não for um .json de processo).
+async function idDoArquivoJson(nome) {
+  try { const x = JSON.parse(await (await (await pastaJson.getFileHandle(nome)).getFile()).text()); return (x.processo && x.processo.id) || "?"; }
+  catch (e) { return e.name === "NotFoundError" ? null : "?"; }
+}
+async function gravarTodosJson() {
+  const arq = arquivados === null ? await carregarArquivados() : arquivados;
+  return filaJson(() => gravarJson([...Object.values(db.processos).map(p => [p, false]), ...arq.map(p => [p, true])], true));
+}
+
 // ---------- Ações ----------
 const acoes = {
   novo() { const p = novoProcesso(); db.processos[p.id] = p; salvar(true); abaDoc = "memoria"; ir("editor", p.id); },
@@ -2089,7 +2179,7 @@ const acoes = {
   },
   async excluir(el) {
     const p = db.processos[el.dataset.id];
-    if (!confirm(`Excluir o processo ${p.processo || "(sem número)"}? Esta ação não pode ser desfeita.`)) return;
+    if (!confirm(`Excluir o processo ${p.processo || "(sem número)"}? Esta ação não pode ser desfeita.${pastaJson ? "\n\nO arquivo .json dele na pasta vinculada não é apagado." : ""}`)) return;
     delete db.processos[p.id]; salvar(true); render();
     if (p.status === "concluido" && temFS && confirm("Remover também este processo do relatório CSV vinculado?")) {
       try { if (await gravarCSV([], [p.id])) toast("Removido do relatório CSV."); } catch (e) { toast("Erro ao atualizar o CSV: " + e.message); }
@@ -2103,7 +2193,7 @@ const acoes = {
   },
   excluirSel() {
     const ids = [...selecionados].filter(id => db.processos[id]);
-    if (!confirm(`Excluir definitivamente ${ids.length} processo(s)? Esta ação não pode ser desfeita.\n\nLinhas já gravadas no relatório CSV não são apagadas.`)) return;
+    if (!confirm(`Excluir definitivamente ${ids.length} processo(s)? Esta ação não pode ser desfeita.\n\nLinhas já gravadas no relatório CSV${pastaJson ? " e os arquivos .json na pasta vinculada" : ""} não são apagadas.`)) return;
     ids.forEach(id => delete db.processos[id]);
     selecionados.clear(); salvar(true); render(); toast(`${ids.length} processo(s) excluído(s).`);
   },
@@ -2200,6 +2290,36 @@ const acoes = {
     catch (e) { toast("Erro: " + e.message); }
   },
   async csvDesvincular() { await handleSet(null); atualizarStatusCSV(); toast("Arquivo desvinculado."); },
+  async jsonEscolherPasta() {
+    try {
+      const h = await window.showDirectoryPicker({ id: "iss-construcao-json", mode: "readwrite" });
+      if (await h.requestPermission({ mode: "readwrite" }) !== "granted") return toast("Permissão de gravação negada.");
+      pastaJson = h; pastaOk = true; db.jsonArquivos = {}; await pastaSet(h);
+      const n = await gravarTodosJson();
+      render(); toast(`Pasta “${h.name}” vinculada: ${n} arquivo(s) .json gravado(s).`);
+    } catch (e) { if (e.name !== "AbortError") toast("Erro: " + e.message); }
+  },
+  async jsonPermitir() {
+    if (!pastaJson) return;
+    try { pastaOk = await pastaJson.requestPermission({ mode: "readwrite" }) === "granted"; } catch (e) { pastaOk = false; }
+    render();
+    if (!pastaOk) return toast("Permissão negada: os .json não serão gravados.");
+    const n = await filaJson(() => gravarJson());
+    toast(n ? `${n} arquivo(s) .json atualizado(s).` : "Os arquivos .json estão em dia.");
+  },
+  async jsonGravarTodos() {
+    if (pastaJson && !pastaOk) return acoes.jsonPermitir();
+    const n = await gravarTodosJson();
+    toast(`${n} arquivo(s) .json gravado(s) em “${pastaJson.name}”.`);
+  },
+  async jsonDesvincular() {
+    await pastaSet(null); pastaJson = null; pastaOk = false; db.jsonArquivos = {}; gravarLocal();
+    render(); toast("Pasta desvinculada. Os arquivos já gravados continuam nela.");
+  },
+  baixarJson() {
+    const p = proc();
+    baixar(new Blob([conteudoJson(p, false)], { type: "application/json" }), nomeArquivoJson(p, Object.values(db.processos)));
+  },
   async csvBaixar() {
     const linhas = (await todosConcluidos())
       .sort((a, b) => a.concluidoEm - b.concluidoEm).map(p => csvLinhaProcesso(p, resultado(p), fiscalDe(p)));
@@ -2215,6 +2335,7 @@ async function arquivarProcessos(ids, semConfirmar) {
   catch (e) { toast("Não foi possível arquivar: " + e.message); return; }
   ps.forEach(p => { delete db.processos[p.id]; selecionados.delete(p.id); });
   salvar(true); await carregarArquivados(); render();
+  filaJson(() => gravarJson(arquivados.filter(p => ids.includes(p.id)).map(p => [p, true])));
   toast(`${ps.length} processo(s) arquivado(s).`);
 }
 async function restaurarProcessos(ids) {
@@ -2228,7 +2349,7 @@ async function restaurarProcessos(ids) {
   toast(`${ps.length} processo(s) restaurado(s) para a lista de uso.`);
 }
 async function excluirArquivados(ids) {
-  if (!confirm(`Excluir definitivamente ${ids.length} processo(s) arquivado(s)? Esta ação não pode ser desfeita.\n\nLinhas já gravadas no relatório CSV não são apagadas.`)) return;
+  if (!confirm(`Excluir definitivamente ${ids.length} processo(s) arquivado(s)? Esta ação não pode ser desfeita.\n\nLinhas já gravadas no relatório CSV${pastaJson ? " e os arquivos .json na pasta vinculada" : ""} não são apagadas.`)) return;
   try { await arquivoRemover(ids); } catch (e) { toast("Não foi possível excluir: " + e.message); return; }
   selecionados.clear(); await carregarArquivados(); render();
   toast(`${ids.length} processo(s) excluído(s).`);
@@ -2291,7 +2412,7 @@ document.addEventListener("input", e => {
 });
 document.addEventListener("change", e => {
   const t = e.target;
-  if (t.id === "arquivoBackup") { importarBackup(t.files[0]); t.value = ""; return; }
+  if (t.id === "arquivoBackup") { importarBackup([...t.files]); t.value = ""; return; }
   if (t.dataset.sel) { t.checked ? selecionados.add(t.dataset.sel) : selecionados.delete(t.dataset.sel); render(); return; }
   if (t.dataset.selTodos !== undefined) {
     document.querySelectorAll("[data-sel]").forEach(c => t.checked ? selecionados.add(c.dataset.sel) : selecionados.delete(c.dataset.sel));
@@ -2321,13 +2442,22 @@ document.addEventListener("change", e => {
   }
   if (t.dataset.num !== undefined && t.value !== "") t.value = fmtNum(parseNum(t.value)); // reformata ao sair do campo
 });
-async function importarBackup(f) {
-  if (!f) return;
+// Aceita o backup completo e os .json de processos (um ou vários arquivos).
+async function importarBackup(files) {
+  if (!files || !files.length) return;
   try {
-    const d = JSON.parse(await f.text());
-    if (!d.processos) throw new Error("arquivo inválido");
-    const n = Object.keys(d.processos).length, nArq = (d.arquivados || []).length;
-    const subst = confirm(`Backup com ${n} processo(s) em uso${nArq ? ` e ${nArq} arquivado(s)` : ""}.\n\nOK = mesclar com os processos atuais (processos com o mesmo ID são substituídos)\nCancelar = não importar`);
+    const d = { processos: {}, arquivados: [], config: null };
+    for (const f of files) {
+      let x;
+      try { x = JSON.parse(await f.text()); } catch (e) { throw new Error(`“${f.name}” não é um arquivo .json válido`); }
+      if (x.tipo === "processo-iss-construcao" && x.processo && x.processo.id) {
+        if (x.arquivado) d.arquivados.push(x.processo); else d.processos[x.processo.id] = x.processo;
+      } else if (x.processos) {
+        Object.assign(d.processos, x.processos); d.arquivados.push(...(x.arquivados || [])); d.config = x.config || d.config;
+      } else throw new Error(`“${f.name}” não é um backup nem um .json de processo`);
+    }
+    const n = Object.keys(d.processos).length, nArq = d.arquivados.length;
+    const subst = confirm(`${files.length > 1 ? `${files.length} arquivos: ` : d.config ? "Backup com " : ""}${n} processo(s) em uso${nArq ? ` e ${nArq} arquivado(s)` : ""}.\n\nOK = mesclar com os processos atuais (processos com o mesmo ID são substituídos)\nCancelar = não importar`);
     if (!subst) return;
     Object.assign(db.processos, d.processos);
     Object.values(d.processos).forEach(migrarProcesso);
@@ -2339,11 +2469,12 @@ async function importarBackup(f) {
       db.config = Object.assign(structuredClone(CONFIG_PADRAO), d.config);
       if (!db.config.tabela) db.config.tabela = structuredClone(TABELA_PADRAO);
     }
-    salvar(true); render(); toast("Backup importado.");
+    salvar(true); render(); toast(`Importado(s) ${n + nArq} processo(s).`);
   } catch (e) { toast("Não foi possível importar: " + e.message); }
 }
 
 carregar();
+iniciarPastaJson();
 </script>
 <!-- ======================= LEITURA EM LOTE (interface) ======================= -->
 <script>

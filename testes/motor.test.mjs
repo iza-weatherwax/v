@@ -7,7 +7,7 @@ import vm from "node:vm";
 const html = readFileSync(new URL("../iss-construcao.html", import.meta.url), "utf8");
 const codigo = html.match(/<script id="motor">([\s\S]*?)<\/script>/)[1];
 const M = vm.createContext({});
-vm.runInContext(codigo + "\n;this.api={calcular,TABELA_PADRAO,extensoReais,parseNum,anoDoProcesso,categoriaPorArea,parseCSV,montarCSV,mesclarCSV,csvLinhaProcesso,cpfValido,cnpjValido,r2,calcularDecadencia,somarAnos,CSV_COLUNAS};", M);
+vm.runInContext(codigo + "\n;this.api={calcular,TABELA_PADRAO,extensoReais,parseNum,anoDoProcesso,categoriaPorArea,parseCSV,montarCSV,mesclarCSV,csvLinhaProcesso,cpfValido,cnpjValido,r2,calcularDecadencia,somarAnos,CSV_COLUNAS,nomeArquivoJson};", M);
 const A = M.api;
 const base = (x) => ({ processo: "", anoManual: "", tipoObra: "construcao", categoria: "auto", area: 0, temMaoDeObra: false,
   usaPropria: false, usaTerceiros: false, propria: [], terceiros: [], ...x });
@@ -187,4 +187,15 @@ test("várias unidades: cada uma na sua faixa e soma dos valores", () => {
   const r3 = calc(base({ processo: "1500/2026", unidades: [{ area: 90, categoria: "galpao" }, { area: 90 }] }));
   assert.equal(r3.unidades[0].valorM2, 270.07);
   assert.equal(r3.unidades[1].valorM2, 307.47);
+});
+
+test("nome do .json de cada processo", () => {
+  const p = { id: "a1b2c3d4-0000", processo: "6184/2025" };
+  assert.equal(A.nomeArquivoJson(p), "processo-6184-2025.json");
+  assert.equal(A.nomeArquivoJson({ id: "a1b2c3d4-0000", processo: "" }), "processo-sem-numero-a1b2c3d4.json");
+  assert.equal(A.nomeArquivoJson({ id: "x", processo: " 12/2026 (cópia) " }), "processo-12-2026 (cópia).json");
+  assert.equal(A.nomeArquivoJson({ id: "x", processo: 'a:b*c?"<>|\\d.' }), "processo-abc-d.json");
+  // mesmo número em outro processo: o início do ID entra no nome
+  assert.equal(A.nomeArquivoJson(p, [p, { id: "ffff9999-1", processo: "6184/2025" }]), "processo-6184-2025-a1b2c3d4.json");
+  assert.equal(A.nomeArquivoJson(p, [p, { id: "ffff9999-1", processo: "6185/2025" }]), "processo-6184-2025.json");
 });
