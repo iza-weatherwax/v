@@ -678,7 +678,6 @@ function _selecionar(cands, iguais = (a, b) => a.chave === b.chave, ordem = ["pr
 // ---------- Guia / carnê de ISS ----------
 const RE_NOME_COBRANCA = /(?:^|[^a-z])(?:iss|issqn|guia|dam|darm|boleto|carne)(?:[^a-z]|$)/;
 const RE_NOME_ISS = /(?:^|[^a-z])(?:iss|issqn)(?:[^a-z]|$)/;
-const RE_GUIA_DOC = /documento (?:unico )?de arrecadacao|guia (?:de|para) (?:recolhimento|arrecadacao|pagamento)|\bdam\b|\bdarm\b|\bduam\b|\bcarne\b/;
 const RE_BOLETO = /linha digitavel|codigo de barras|nosso numero|pagavel (?:em qualquer|preferencialmente)|ficha de compensacao|recibo do pagador|recibo do sacado/;
 // O tipo de imposto no documento: ISS, I.S.S., ISSQN ou "imposto sobre serviços".
 const RE_MENCAO_ISS = /\biss(?:qn)?\b|\bi\. ?s\. ?s\b|\bi\. ?s\. ?s\. ?q\. ?n\b|imposto sobre (?:servicos|serv\b|o servico)/;
@@ -1005,7 +1004,9 @@ function analisarProcesso(nomePasta, arquivos) {
   for (const pg of ehPrestTomador) fortes.push({ nome: "nota com prestador e tomador de serviços", fonte: { arquivo: pg.arquivo, pagina: pg.pagina, trecho: "" } });
   if (!fortes.length) for (const s of SINAIS_FRACOS) _cada(paginas, s.re, (m, pg) => fracos.push({ nome: s.nome, fonte: _fonte(pg, m.index, m.index + m[0].length) }));
 
-  // 3. Guias, boletos e carnês
+  // 3. Guias, boletos e carnês de ISS
+  // Só conta como guia de ISS o código de barras (linha digitável com os dígitos conferidos) numa página que mencione ISS.
+  // Matrículas e certidões citam "ISSQN" nos emolumentos, "guia", "vencimento" e "pago em", mas não têm código de barras.
   const guias = [];
   const codigosVistos = new Map(); // linha digitável → arquivo onde apareceu primeiro
   for (const a of arquivos) {
@@ -1019,28 +1020,29 @@ function analisarProcesso(nomePasta, arquivos) {
     }
     const linhas = [];
     for (const pg of pgs) {
+      const iss = RE_MENCAO_ISS.test(pg.dob);
       for (const l of extrairLinhasDigitaveis(pg.texto)) {
         if (linhas.some(x => x.codigo === l.codigo)) continue;
         const antes = pg.dob.slice(Math.max(0, l.indice - 600), l.indice);
         let rot = null, x; RE_PARCELA.lastIndex = 0;
         while ((x = RE_PARCELA.exec(antes))) rot = x[1] ? `parcela ${Number(x[1])}/${Number(x[2])}` : "cota única";
-        linhas.push({ ...l, rotulo: rot, fonte: _fonte(pg, l.indice, l.fim) });
+        linhas.push({ ...l, rotulo: rot, pg, iss, fonte: _fonte(pg, l.indice, l.fim) });
       }
     }
-    // Cobrança de verdade: linha digitável, sinais de boleto, ou guia com vencimento e valor.
-    // (Um requerimento que só menciona "a guia de recolhimento do ISS" não é uma guia.)
-    const cobranca = linhas.length > 0 || pgs.some(pg => RE_BOLETO.test(pg.dob) ||
-      (RE_GUIA_DOC.test(pg.dob) && /vencimento/.test(pg.dob) && /\d{1,3}(?:\.\d{3})*,\d{2}/.test(pg.dob)));
-    const mencionaIss = pgs.some(pg => RE_MENCAO_ISS.test(pg.dob));
-    if (!cobranca && !(nomeCobranca && mencionaIss)) continue;
-    if (!mencionaIss) {
-      avisa(`O arquivo “${a.nome}” é um boleto ou guia, mas não indica ISS (ISS, I.S.S. ou imposto sobre serviços); provavelmente é outra taxa. Não foi considerado guia de ISS.`, (linhas[0] || {}).fonte || { arquivo: a.nome, pagina: pgs[0].pagina, trecho: "" });
+    const linhasIss = linhas.filter(l => l.iss), outras = linhas.filter(l => !l.iss);
+    if (!linhasIss.length) {
+      if (outras.length) avisa(`O arquivo “${a.nome}” tem código de barras, mas não indica ISS (ISS, I.S.S. ou imposto sobre serviços); provavelmente é outra taxa. Não foi considerado guia de ISS.`, outras[0].fonte);
+      // Parece guia de ISS (pelo nome ou por sinais de boleto), mas sem código de barras legível: só para conhecimento.
+      else if (pgs.some(pg => RE_MENCAO_ISS.test(pg.dob)) && (nomeCobranca || pgs.some(pg => RE_BOLETO.test(pg.dob))))
+        avisa(`O arquivo “${a.nome}” menciona ISS e parece guia ou boleto, mas não encontrei código de barras (linha digitável) legível. Não foi considerado guia de ISS; se for uma guia, confira o valor e se já foi paga.`, { arquivo: a.nome, pagina: pgs[0].pagina, trecho: "" });
       continue;
     }
-    const g = { arquivo: a.nome, pagina: pgs[0].pagina, pago: pgs.some(pg => RE_PAGO.test(pg.dob)), carne: pgs.some(pg => RE_CARNE.test(pg.dob)) || linhas.length > 1, valores: [], vencimentos: [] };
+    if (outras.length) diz("info", `${outras.length} código(s) de barras de “${a.nome}” estão em página(s) que não indicam ISS e não foram considerados.`, outras[0].fonte);
+    const pgsGuia = [...new Set(linhasIss.map(l => l.pg))];
+    const g = { arquivo: a.nome, pagina: pgsGuia[0].pagina, pago: pgsGuia.some(pg => RE_PAGO.test(pg.dob)), carne: pgsGuia.some(pg => RE_CARNE.test(pg.dob)) || linhasIss.length > 1, valores: [], vencimentos: [] };
     // O mesmo carnê/guia anexado de novo (outro arquivo, outra digitalização): cada parcela é contada uma vez só.
-    const repetidas = linhas.filter(l => codigosVistos.has(l.codigo)), novas = linhas.filter(l => !codigosVistos.has(l.codigo));
-    if (linhas.length && !novas.length) {
+    const repetidas = linhasIss.filter(l => codigosVistos.has(l.codigo)), novas = linhasIss.filter(l => !codigosVistos.has(l.codigo));
+    if (!novas.length) {
       const orig = [...new Set(repetidas.map(l => codigosVistos.get(l.codigo)))].join("”, “");
       avisa(`O arquivo “${a.nome}” repete ${g.carne ? "o carnê" : "a guia"} de ISS de “${orig}” (mesmas linhas digitáveis) e não foi contado de novo.`, repetidas[0].fonte);
       continue;
@@ -1048,21 +1050,17 @@ function analisarProcesso(nomePasta, arquivos) {
     if (repetidas.length) diz("info", `${repetidas.length} parcela(s) de “${a.nome}” já estavam em “${[...new Set(repetidas.map(l => codigosVistos.get(l.codigo)))].join("”, “")}” e não foram contadas de novo.`, repetidas[0].fonte);
     for (const l of novas) codigosVistos.set(l.codigo, a.nome);
     for (const l of novas) if (l.valor) g.valores.push({ valor: r2(l.valor), rotulo: l.rotulo, origem: "linha digitável", fonte: l.fonte });
+    // Linha digitável sem valor embutido (ex.: só referência): valor pelo texto da guia.
     if (!g.valores.length) {
-      for (const pg of pgs) {
+      for (const pg of pgsGuia) {
         RE_VALOR_GUIA.lastIndex = 0; let m; const vs = [];
         while ((m = RE_VALOR_GUIA.exec(pg.dob))) vs.push({ v: parseNum(m[1]), forte: /total|documento|a pagar|a recolher|cobrado|do iss|da parcela/.test(m[0]), ini: m.index, fim: m.index + m[0].length });
         const v = vs.find(x => x.forte) || vs[0];
         if (v) { g.valores.push({ valor: r2(v.v), rotulo: null, origem: "texto", fonte: _fonte(pg, v.ini, v.fim) }); break; }
       }
     }
-    for (const pg of pgs) { RE_VENC.lastIndex = 0; let m; while ((m = RE_VENC.exec(pg.dob))) if (!g.vencimentos.includes(m[1])) g.vencimentos.push(m[1]); }
-    // Sem linha digitável: a mesma guia é reconhecida pelo mesmo valor e vencimento.
-    if (!linhas.length && g.valores.length) {
-      const igual = guias.find(x => x.valores.length === 1 && x.valores[0].origem === "texto" && x.valores[0].valor === g.valores[0].valor && (x.vencimentos[0] || "") === (g.vencimentos[0] || ""));
-      if (igual) { avisa(`O arquivo “${a.nome}” repete a guia de ISS de “${igual.arquivo}” (mesmo valor e vencimento) e não foi contado de novo.`, g.valores[0].fonte); continue; }
-    }
-    const fonteIss = (() => { for (const pg of pgs) { const m = RE_MENCAO_ISS.exec(pg.dob); if (m) return _fonte(pg, m.index, m.index + m[0].length); } return null; })();
+    for (const pg of pgsGuia) { RE_VENC.lastIndex = 0; let m; while ((m = RE_VENC.exec(pg.dob))) if (!g.vencimentos.includes(m[1])) g.vencimentos.push(m[1]); }
+    const fonteIss = (() => { for (const pg of pgsGuia) { const m = RE_MENCAO_ISS.exec(pg.dob); if (m) return _fonte(pg, m.index, m.index + m[0].length); } return null; })();
     g.total = r2(g.valores.reduce((s, v) => s + v.valor, 0));
     guias.push(g);
     const det = g.valores.length

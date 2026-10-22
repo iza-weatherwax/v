@@ -296,11 +296,37 @@ ${linhaArrecadacao(2322.86, 2)}`;
   assert.equal(r.guias.length, 2);
   assert.equal(r.guias[1].total, 100);
   assert.ok(r.narrativa.some(n => /1 parcela\(s\) de “outro\.pdf” já estavam em “carne\.pdf”/.test(n.msg)));
-  // 4) guia sem linha digitável repetida: mesmo valor e vencimento
+});
+
+test("guia de ISS só com código de barras numa página que menciona ISS", () => {
+  // matrícula do imóvel: ISSQN nos emolumentos do cartório, guia do ITBI, vencimento e "pago em" — não é guia de ISS
+  const matricula = `REGISTRO DE IMÓVEIS DA COMARCA DE ARAGUARI
+CERTIDÃO DE INTEIRO TEOR — MATRÍCULA Nº 12.345
+R-3-12.345 — ALIENAÇÃO FIDUCIÁRIA: valor da dívida R$ 150.000,00, vencimento da primeira prestação em 10/05/2020.
+AV-4 — ITBI pago em 02/03/2020, conforme guia de recolhimento nº 998877.
+Emolumentos: R$ 45,10 — Taxa de Fiscalização Judiciária: R$ 15,00 — ISSQN: R$ 2,25 — Total: R$ 62,35`;
+  let r = analisarProcesso("1500-2026", [pdf("habite-se.pdf", HABITE), pdf("matricula.pdf", matricula)]);
+  assert.equal(r.guias.length, 0);
+  assert.equal(r.semaforo, "verde", r.alertas.join(" | "));
+  assert.ok(!r.avisos.some(a => /matricula/.test(a)), r.avisos.join(" | "));
+  // guia de ISS sem código de barras legível: não é guia, só um aviso para conhecimento
   const guiaTexto = "GUIA DE RECOLHIMENTO - ISSQN\nVencimento: 30/10/2026\nValor total: R$ 4.645,72\nCódigo de barras";
-  r = analisarProcesso("1500-2026", [pdf("habite-se.pdf", HABITE), pdf("guia iss.pdf", guiaTexto), pdf("guia iss 2.pdf", guiaTexto + "\nCópia")]);
+  r = analisarProcesso("1500-2026", [pdf("habite-se.pdf", HABITE), pdf("guia iss.pdf", guiaTexto)]);
+  assert.equal(r.guias.length, 0);
+  assert.equal(r.semaforo, "verde", r.alertas.join(" | "));
+  assert.ok(r.avisos.some(a => /“guia iss\.pdf” menciona ISS e parece guia ou boleto, mas não encontrei código de barras/.test(a)));
+  // um PDF com vários documentos: o código de barras da taxa (página sem ISS) não vira guia de ISS por causa da matrícula
+  const taxa = `DOCUMENTO DE ARRECADAÇÃO MUNICIPAL\nReceita: TAXA DE LICENÇA PARA EXECUÇÃO DE OBRAS\nVencimento: 30/10/2026\n${linhaArrecadacao(250)}`;
+  r = analisarProcesso("1500-2026", [pdf("habite-se.pdf", HABITE), pdf("processo.pdf", taxa, matricula)]);
+  assert.equal(r.guias.length, 0);
+  assert.ok(r.avisos.some(a => /“processo\.pdf” tem código de barras, mas não indica ISS/.test(a)));
+  // guia de ISS e taxa no mesmo PDF: só o código de barras da página do ISS conta
+  const guiaIss = `DOCUMENTO DE ARRECADAÇÃO MUNICIPAL\nTributo: ISSQN — construção civil\nVencimento: 30/10/2026\n${linhaArrecadacao(4645.72, 7)}`;
+  r = analisarProcesso("1500-2026", [pdf("habite-se.pdf", HABITE), pdf("processo.pdf", taxa, guiaIss)]);
   assert.equal(r.guias.length, 1);
-  assert.ok(r.avisos.some(a => /mesmo valor e vencimento/.test(a)));
+  assert.equal(r.guias[0].total, 4645.72);
+  assert.equal(r.guias[0].pagina, 2);
+  assert.ok(r.narrativa.some(n => /1 código\(s\) de barras de “processo\.pdf” estão em página\(s\) que não indicam ISS/.test(n.msg)));
 });
 
 test("o tipo do imposto: ISS sozinho, ISSQN, I.S.S. e imposto sobre serviços", () => {
