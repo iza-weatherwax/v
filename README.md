@@ -26,7 +26,7 @@ Para **ordenar a lista** (por exemplo, em ordem alfabética pelo requerente), cl
 3. **Decadência** (opcional) — informe a data de conclusão da obra, o fundamento (art. 173, I, ou art. 150, § 4º, do CTN) e as provas da data de conclusão. O assistente calcula o prazo final para o lançamento e, se decaído, zera o ISS a pagar (o valor apurado continua registrado) e gera o **parecer de decadência**.
 4. **Mão de obra** — pergunta obrigatória (dispensada se a decadência for reconhecida): houve comprovação?
    - **Não** → cálculo somente pela área, sem deduções.
-   - **Sim** → Anexo I (folha de pagamento e rescisões: salário + INSS + FGTS) e/ou Anexo II (notas fiscais de terceiros). Cada lançamento pode ser aceito ou glosado, com motivo.
+   - **Sim** → Anexo I (folha de pagamento e rescisões: salário + INSS + FGTS) e/ou Anexo II (notas fiscais de terceiros). Cada lançamento pode ser aceito ou glosado, com motivo. As notas fiscais são **organizadas automaticamente pela data de emissão** (as sem data ficam no fim; na mesma data, pelo número da NF) — na tela, ao adicionar ou remover notas e ao abrir o processo, e sempre na memória de cálculo.
 5. **Fiscal** — o auditor é preenchido uma vez e fica **fixo** para todos os processos (alterável em Configurações). Para um caso específico, marque “Usar outro fiscal só neste processo”. A assinatura é feita no documento impresso ou eletronicamente.
 6. **Checklist** — mostra pendências obrigatórias e as conferências documentais; o processo só pode ser concluído sem pendências.
 7. **Documentos** — memória de cálculo, decisão e, quando analisada, parecer de decadência (os textos da decisão e do parecer podem ser editados). Imprima ou salve em PDF pelo próprio navegador.
@@ -86,7 +86,8 @@ Cada processo concluído vira uma linha do relatório (separador `;`, abre diret
 ## Testes
 
 ```
-node --test testes/*.test.mjs
+node --test testes/*.test.mjs     # motor de cálculo e leitura
+node testes/navegador.mjs          # no navegador (requer o Playwright com Chromium)
 ```
 
 Os testes reproduzem os processos 6184/2025 (R$ 1.477,08) e 3057/2026 — demolição (R$ 1.590,46).

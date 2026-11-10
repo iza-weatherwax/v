@@ -273,6 +273,16 @@ function descreverUnidades(res) {
 }
 function totalLinhaPropria(l) { return r2(parseNum(l.salario) + parseNum(l.inss) + parseNum(l.fgts)); }
 
+// Notas fiscais em ordem cronológica de emissão (as sem data vão para o fim; na mesma data, pelo número da NF).
+const _ordemNF = new Intl.Collator("pt-BR", { numeric: true, sensitivity: "base" });
+function ordenarNotas(notas) {
+  return (notas || []).map((n, i) => ({ n, i })).sort((a, b) => {
+    const da = a.n.data || "", db = b.n.data || "";
+    if (!da !== !db) return da ? -1 : 1;
+    return da.localeCompare(db) || _ordemNF.compare(String(a.n.nf || ""), String(b.n.nf || "")) || a.i - b.i;
+  }).map(x => x.n);
+}
+
 // ---------- Decadência (CTN, arts. 150, § 4º, 156, V, e 173, I) ----------
 const PROVAS_DECADENCIA = [
   "Imagem de satélite / foto aérea histórica",
@@ -1463,6 +1473,12 @@ function campo(rotulo, path, p, { req = false, tipo = "text", num = false, ph = 
     <input type="${tipo}" data-f="${path}" ${num ? "data-num" : ""} value="${esc(v)}" placeholder="${esc(ph)}" ${extra}></label>`;
 }
 function vistaEditor(p) {
+  // As notas fiscais ficam sempre organizadas pela data de emissão (reordenadas a cada atualização da tela,
+  // nunca enquanto se digita).
+  if (p.status !== "concluido" && (p.terceiros || []).length > 1) {
+    const ord = ordenarNotas(p.terceiros);
+    if (ord.some((n, i) => n !== p.terceiros[i])) { p.terceiros = ord; salvar(); }
+  }
   const res = resultado(p);
   const bloqueado = p.status === "concluido";
   const anoAuto = anoDoProcesso(p.processo);
@@ -1629,7 +1645,9 @@ function tabelaTerceiros(p) {
     <td><button class="btn peq perigo" data-acao="remLinha" data-l="terceiros" data-i="${i}" title="Remover">✕</button></td></tr>`).join("");
   return `<h3>Anexo II — Mão de obra de terceiros</h3><div class="rolagem"><table class="dados"><thead><tr><th>Data</th><th>Nº da NF</th><th>Cód. mobiliário</th><th>Razão social</th><th>Valor</th><th>Situação</th><th></th></tr></thead>
     <tbody>${rows || `<tr><td colspan="7" class="muted">Nenhuma nota.</td></tr>`}</tbody></table></div>
-    <button class="btn peq" data-acao="addLinha" data-l="terceiros" style="margin-top:6px">+ Adicionar nota fiscal</button>`;
+    <div class="acoes" style="margin-top:6px"><button class="btn peq" data-acao="addLinha" data-l="terceiros">+ Adicionar nota fiscal</button>
+    ${p.terceiros.length > 1 ? `<button class="btn peq" data-acao="ordenarNotas">Organizar por data agora</button>` : ""}
+    <span class="muted" style="font-size:12px">As notas são organizadas automaticamente pela data de emissão.</span></div>`;
 }
 function painelResultado(p, res) {
   const linha = (a, b, cls = "") => `<div class="${cls}"><span>${a}</span><span>${b}</span></div>`;
@@ -1697,13 +1715,13 @@ function docMemoria(p, res) {
         <tbody>${rows || `<tr><td colspan="7">—</td></tr>`}<tr><th colspan="5">TOTAL MÃO DE OBRA PRÓPRIA (aceita)</th><th class="num">${fmtNum(res.propriaAceita)}</th><th></th></tr></tbody></table>`;
     }
     if (p.usaTerceiros) {
-      const rows = p.terceiros.map(n => `<tr><td>${dataBR(n.data)}</td><td>${esc(n.nf)}</td><td>${esc(n.codMob)}</td><td>${esc(n.razao)}</td>
+      const rows = ordenarNotas(p.terceiros).map(n => `<tr><td>${dataBR(n.data)}</td><td>${esc(n.nf)}</td><td>${esc(n.codMob)}</td><td>${esc(n.razao)}</td>
         <td class="num">${fmtNum(parseNum(n.valor))}</td><td>${n.aceita === false ? "Glosada" : "Aceita"}</td></tr>`).join("");
       anexos += `<h3>Anexo II — Mão de obra de terceiros</h3><table><thead><tr><th>Data</th><th>Nº da NF</th><th>Cód. mobiliário</th><th>Razão social</th><th class="num">Valor</th><th>Situação</th></tr></thead>
         <tbody>${rows || `<tr><td colspan="6">—</td></tr>`}<tr><th colspan="4">TOTAL MÃO DE OBRA DE TERCEIROS (aceita)</th><th class="num">${fmtNum(res.terceirosAceita)}</th><th></th></tr></tbody></table>`;
     }
     const glosas = [...(p.usaPropria ? p.propria.map(l => ({ d: `Folha ${competenciaBR(l.competencia)}${l.tipo === "rescisao" ? " (rescisão)" : ""}`, v: totalLinhaPropria(l), l })) : []),
-      ...(p.usaTerceiros ? p.terceiros.map(n => ({ d: `NF ${n.nf} – ${n.razao}`, v: parseNum(n.valor), l: n })) : [])].filter(x => x.l.aceita === false);
+      ...(p.usaTerceiros ? ordenarNotas(p.terceiros).map(n => ({ d: `NF ${n.nf} – ${n.razao}`, v: parseNum(n.valor), l: n })) : [])].filter(x => x.l.aceita === false);
     if (glosas.length) anexos += `<h3>Valores glosados</h3><table><thead><tr><th>Documento</th><th class="num">Valor</th><th>Motivo</th></tr></thead><tbody>
       ${glosas.map(g => `<tr><td>${esc(g.d)}</td><td class="num">${fmtNum(g.v)}</td><td>${esc(motivoTexto(g.l))}</td></tr>`).join("")}</tbody></table>`;
   } else if (p.temMaoDeObra === null && res.decaido) {
@@ -2023,6 +2041,7 @@ const acoes = {
     if (!confirm("Calcular como área única? A área passa a ser a soma das unidades, numa só faixa da tabela.")) return;
     p.area = resultado(p).area; p.unidades = []; tocar(p); render();
   },
+  ordenarNotas() { const p = proc(); p.terceiros = ordenarNotas(p.terceiros); tocar(p); render(); },
   remLinha(el) { const p = proc(); p[el.dataset.l].splice(Number(el.dataset.i), 1); tocar(p); render(); },
   async concluir() {
     const p = proc(); const res = resultado(p);

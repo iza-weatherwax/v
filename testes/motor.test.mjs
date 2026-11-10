@@ -7,7 +7,7 @@ import vm from "node:vm";
 const html = readFileSync(new URL("../iss-construcao.html", import.meta.url), "utf8");
 const codigo = html.match(/<script id="motor">([\s\S]*?)<\/script>/)[1];
 const M = vm.createContext({});
-vm.runInContext(codigo + "\n;this.api={calcular,TABELA_PADRAO,extensoReais,parseNum,anoDoProcesso,categoriaPorArea,parseCSV,montarCSV,mesclarCSV,csvLinhaProcesso,cpfValido,cnpjValido,r2,calcularDecadencia,somarAnos,CSV_COLUNAS};", M);
+vm.runInContext(codigo + "\n;this.api={ordenarNotas,calcular,TABELA_PADRAO,extensoReais,parseNum,anoDoProcesso,categoriaPorArea,parseCSV,montarCSV,mesclarCSV,csvLinhaProcesso,cpfValido,cnpjValido,r2,calcularDecadencia,somarAnos,CSV_COLUNAS};", M);
 const A = M.api;
 const base = (x) => ({ processo: "", anoManual: "", tipoObra: "construcao", categoria: "auto", area: 0, temMaoDeObra: false,
   usaPropria: false, usaTerceiros: false, propria: [], terceiros: [], ...x });
@@ -160,4 +160,14 @@ test("várias unidades: cada uma na sua faixa e soma dos valores", () => {
   const r3 = calc(base({ processo: "1500/2026", unidades: [{ area: 90, categoria: "galpao" }, { area: 90 }] }));
   assert.equal(r3.unidades[0].valorM2, 270.07);
   assert.equal(r3.unidades[1].valorM2, 307.47);
+});
+
+test("notas fiscais em ordem cronológica de emissão", () => {
+  const notas = [
+    { nf: "30", data: "2026-03-15" }, { nf: "7", data: "" }, { nf: "12", data: "2025-11-02" },
+    { nf: "10", data: "2026-03-15" }, { nf: "2", data: "2026-01-20" }, { nf: "5" }
+  ];
+  const r = A.ordenarNotas(notas).map(n => n.nf);
+  assert.deepEqual([...r], ["12", "2", "10", "30", "5", "7"]); // sem data: no fim, pelo número
+  assert.equal(notas[0].nf, "30"); // não altera a lista original
 });
