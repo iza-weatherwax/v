@@ -7,7 +7,7 @@ import vm from "node:vm";
 const html = readFileSync(new URL("../iss-construcao.html", import.meta.url), "utf8");
 const codigo = html.match(/<script id="motor">([\s\S]*?)<\/script>/)[1];
 const M = vm.createContext({});
-vm.runInContext(codigo + "\n;this.api={calcular,TABELA_PADRAO,extensoReais,parseNum,anoDoProcesso,categoriaPorArea,parseCSV,montarCSV,mesclarCSV,csvLinhaProcesso,cpfValido,cnpjValido,r2,calcularDecadencia,somarAnos,CSV_COLUNAS,nomeArquivoJson,processoNoAP};", M);
+vm.runInContext(codigo + "\n;this.api={calcular,TABELA_PADRAO,extensoReais,parseNum,anoDoProcesso,categoriaPorArea,parseCSV,montarCSV,mesclarCSV,csvLinhaProcesso,cpfValido,cnpjValido,r2,calcularDecadencia,somarAnos,CSV_COLUNAS,nomeArquivoJson,processoNoAP,ordemNotas};", M);
 const A = M.api;
 const base = (x) => ({ processo: "", anoManual: "", tipoObra: "construcao", categoria: "auto", area: 0, temMaoDeObra: false,
   usaPropria: false, usaTerceiros: false, propria: [], terceiros: [], ...x });
@@ -206,4 +206,17 @@ test("número do processo no formato do AP (NNNN/AAAA)", () => {
   assert.equal(A.processoNoAP({ processo: "5555", anoManual: "2025" }), "5555/2025");   // pasta só com o número
   assert.equal(A.processoNoAP({ processo: "6184/2025 (cópia)" }), "6184/2025");
   assert.equal(A.processoNoAP({ processo: "6184/2025", anoManual: "2024" }), "6184/2025"); // o ano do número vale
+});
+
+test("notas fiscais em ordem de data de emissão", () => {
+  const notas = [
+    { data: "2025-03-10", nf: "15" }, { data: "", nf: "nova" }, { data: "2024-11-02", nf: "7" },
+    { data: "2025-03-10", nf: "9" }, { data: "2025-01-20", nf: "2" }, { data: "", nf: "outra nova" }
+  ];
+  // mais antiga primeiro; na mesma data, pelo número (9 antes de 15); sem data no fim, na ordem de lançamento
+  assert.deepEqual([...A.ordemNotas(notas)], [2, 4, 3, 0, 1, 5]);
+  assert.deepEqual([...A.ordemNotas([])], []);
+  // o cálculo não depende da ordem
+  const p = base({ processo: "1/2025", area: 99, temMaoDeObra: true, usaTerceiros: true, terceiros: notas.map((n, i) => ({ ...n, valor: 100 * (i + 1) })) });
+  assert.equal(calc(p).terceirosAceita, calc({ ...p, terceiros: [...p.terceiros].reverse() }).terceirosAceita);
 });
