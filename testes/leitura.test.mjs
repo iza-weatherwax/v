@@ -478,3 +478,95 @@ test("lote: número do processo pela pasta e processos que já existem", () => {
   assert.equal(mesmoProcesso("5555/2026 (cópia)", "5555/2026"), false);
   assert.equal(mesmoProcesso("", "5555"), false);
 });
+
+// Notas fiscais de serviço fictícias: formato municipal ("Rótulo: valor") e em grade (estilo do DANFSe nacional).
+const NFSE_MUNICIPAL = `PREFEITURA MUNICIPAL DE ARAGUARI
+NOTA FISCAL DE SERVIÇOS ELETRÔNICA - NFS-e
+Número da Nota: 000152
+Data e Hora de Emissão: 10/03/2026 14:05:33
+Código de Verificação: AB12-CD34
+PRESTADOR DE SERVIÇOS
+Nome/Razão Social: CONSTRUTORA EXEMPLO LTDA
+CPF/CNPJ: 11.222.333/0001-81  Inscrição Municipal: 4.567
+Endereço: RUA A, 10 - CENTRO  Município: ARAGUARI - MG
+TOMADOR DE SERVIÇOS
+Nome/Razão Social: MARIA APARECIDA DE SOUZA
+CPF/CNPJ: 123.456.789-09
+Endereço: RUA DAS FLORES, 100  Município: ARAGUARI - MG
+DISCRIMINAÇÃO DOS SERVIÇOS
+Mão de obra de pedreiro na obra da Rua das Flores, 100.
+VALOR TOTAL DA NOTA = R$ 15.000,00
+Valor dos Serviços: R$ 15.000,00  Base de Cálculo: R$ 15.000,00  Alíquota: 5,00%  Valor do ISS: R$ 750,00`;
+const DANFSE = `DANFSe v1.0
+Documento Auxiliar da NFS-e
+Chave de Acesso da NFS-e
+31470032211444777000161000000000000926030000000013
+Número da NFS-e  Competência da NFS-e  Data e Hora da emissão da NFS-e
+9  01/02/2026  05/02/2026 09:15:00
+EMITENTE DA NFS-e
+CNPJ / CPF / NIF  Inscrição Municipal  Telefone
+11.444.777/0001-61  7788  (34) 3241-0000
+Nome / Nome Empresarial  E-mail
+HIDRO INSTALAÇÕES LTDA  contato@hidro.com.br
+Endereço  Município  CEP
+RUA B, 20 - CENTRO  Araguari - MG  38440-000
+TOMADOR DO SERVIÇO
+CNPJ / CPF / NIF  Inscrição Municipal  Telefone
+123.456.789-09
+Nome / Nome Empresarial  E-mail
+MARIA APARECIDA DE SOUZA
+SERVIÇO PRESTADO
+Código de Tributação Nacional  Local da Prestação
+07.02.01  Araguari - MG
+Descrição do Serviço
+Instalações hidráulicas na obra da Rua das Flores, 100.
+TRIBUTAÇÃO MUNICIPAL
+Município de Incidência do ISSQN
+Araguari - MG
+VALOR TOTAL DA NFS-E
+Valor do Serviço  Desconto Condicionado  Desconto Incondicionado
+R$ 3.200,00  R$ 0,00  R$ 0,00
+Valor Líquido da NFS-e
+R$ 3.200,00`;
+
+test("notas fiscais de serviço: lidas e lançadas no Anexo II para conferência", () => {
+  const r = analisarProcesso("1500-2026", [pdf("habite-se.pdf", HABITE), pdf("nota 152.pdf", NFSE_MUNICIPAL), pdf("danfse 9.pdf", DANFSE)]);
+  assert.equal(r.semaforo, "amarelo");
+  assert.equal(r.dados.temMaoDeObra, true);
+  assert.equal(r.dados.usaTerceiros, true);
+  const ns = r.dados.terceiros;
+  assert.equal(ns.length, 2);
+  assert.deepEqual({ ...ns[0], lida: undefined }, { data: "2026-03-10", nf: "152", codMob: "4.567", razao: "CONSTRUTORA EXEMPLO LTDA", valor: 15000, aceita: true, motivo: "", lida: undefined });
+  assert.deepEqual({ ...ns[1], lida: undefined }, { data: "2026-02-05", nf: "9", codMob: "7788", razao: "HIDRO INSTALAÇÕES LTDA", valor: 3200, aceita: true, motivo: "", lida: undefined });
+  assert.equal(ns[1].lida, "danfse 9.pdf, pág. 1");
+  assert.ok(r.alertas.some(a => /Li 2 nota\(s\) fiscal\(is\) de serviço e lancei no Anexo II/.test(a)));
+  // tomador = requerente, prestador e ISS em Araguari, campos completos: nenhum outro alerta das notas
+  assert.equal(r.alertas.filter(a => /nota fiscal nº/i.test(a)).length, 0, r.alertas.join(" | "));
+  assert.ok(r.narrativa.some(n => /Nota fiscal nº 152 de 10\/03\/2026 — CONSTRUTORA EXEMPLO LTDA \(inscrição municipal 4\.567\): R\$ 15\.000,00/.test(n.msg)));
+});
+
+test("notas fiscais: alertas para o fiscal conferir", () => {
+  const outra = NFSE_MUNICIPAL.replace("Município: ARAGUARI - MG\nTOMADOR", "Município: UBERLÂNDIA - MG\nTOMADOR")
+    .replace("123.456.789-09", "987.654.321-00").replace("Nome/Razão Social: MARIA APARECIDA DE SOUZA", "Nome/Razão Social: JOÃO TERCEIRO")
+    + "\nNFS-e CANCELADA";
+  const semValor = DANFSE.replace(/Valor do Serviço[\s\S]*$/, "").replace("05/02/2026 09:15:00", "");
+  const r = analisarProcesso("1500-2026", [pdf("habite-se.pdf", HABITE), pdf("a.pdf", outra), pdf("b.pdf", semValor), pdf("a (1).pdf", "Digitalizado em 12/03/2026\n" + outra)]);
+  const ns = r.dados.terceiros;
+  assert.equal(ns.length, 2);                               // a cópia da nota 152 não entra de novo
+  assert.equal(ns[0].codMob, "");                            // inscrição de outro município não vira código mobiliário
+  const a = r.alertas.join(" | ");
+  assert.match(a, /nº 152 \(a\.pdf, pág\. 1\): prestador de outro município \(UBERLÂNDIA - MG\)/);
+  assert.match(a, /nº 152 .* parece estar cancelada/);
+  assert.match(a, /nº 152 .* tem como tomador JOÃO TERCEIRO \(987\.654\.321-00\), e não o requerente \(123\.456\.789-09\)/);
+  assert.match(a, /nº 9 \(b\.pdf, pág\. 1\): não encontrei valor/);
+  assert.match(a, /nº 9 .* não encontrei a data de emissão; usei a da competência/);
+  assert.equal(ns[1].data, "2026-02-01");
+  assert.ok(r.avisos.some(v => /nº 152 \(a \(1\)\.pdf, pág\. 1\) repete a de “a\.pdf”/.test(v)), r.avisos.join(" | "));
+});
+
+test("notas fiscais com folha de pagamento: continua pulado, com as notas prontas para o rascunho", () => {
+  const r = analisarProcesso("1500-2026", [pdf("habite-se.pdf", HABITE), pdf("nota.pdf", NFSE_MUNICIPAL), pdf("folha.pdf", "RECIBO DE PAGAMENTO DE SALÁRIO\nFuncionário: José")]);
+  assert.equal(r.semaforo, "vermelho");
+  assert.equal(r.dados.terceiros.length, 1);
+  assert.ok(r.narrativa.some(n => /indícios de folha de pagamento .* As 1 nota\(s\) fiscal\(is\) de serviço lida\(s\) já entram no Anexo II/.test(n.msg)));
+});

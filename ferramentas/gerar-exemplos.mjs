@@ -98,12 +98,36 @@ docx(d + "requerimento.docx", ["REQUERIMENTO DE BAIXA DE DEMOLIÇÃO", "Processo
 await pdf(d + "baixa-demolicao.pdf", habite({ titulo: "ALVARÁ DE BAIXA DE DEMOLIÇÃO", ...p2, end: "Rua Exemplo, 1901, Jardim Teste", areas: ["Área demolida: 282,87 m²"] }));
 await pdf(d + "alvara-demolicao.pdf", alvara({ titulo: "ALVARÁ DE DEMOLIÇÃO", ...p2, end: "Rua Exemplo, 1901", areas: ["Área a demolir: 282,87 m²"] }));
 
-// 3) Com nota fiscal (vermelho)
+// 3) Com notas fiscais de serviço: lidas e lançadas no Anexo II para o fiscal conferir (amarelo).
+//    Uma nota no formato municipal ("Rótulo: valor") e outra em grade (estilo do DANFSe nacional), fora de ordem.
 d = pasta("1600-2026");
 const p3 = { nome: "ANTÔNIO DOS SANTOS LIMA", cpf: "529.982.247-25", cci: "70001" };
 await pdf(d + "habite-se.pdf", habite({ ...p3, end: "Avenida Teste, 55 - Bairro Novo", areas: ["Área construída: 120,00 m²"] }));
-await pdf(d + "nota-servico.pdf", pagina(`<h3>NOTA FISCAL DE SERVIÇOS ELETRÔNICA — NFS-e nº 1234</h3><p>Código de Verificação: ABCD-1234</p>
-  <p>PRESTADOR DE SERVIÇOS: Construtora Exemplo Ltda — CNPJ 11.222.333/0001-81</p><p>TOMADOR DE SERVIÇOS: Antônio dos Santos Lima</p><p>Valor dos serviços: R$ 15.000,00</p>`));
+const nfMunicipal = `<div style="font:11pt Arial">
+  <h3 style="text-align:center">NOTA FISCAL DE SERVIÇOS ELETRÔNICA — NFS-e</h3>
+  <p>Número da Nota: 000152</p><p>Data e Hora de Emissão: 10/03/2026 14:05:33</p><p>Código de Verificação: AB12-CD34</p>
+  <h4>PRESTADOR DE SERVIÇOS</h4><p>Nome/Razão Social: CONSTRUTORA EXEMPLO LTDA</p><p>CPF/CNPJ: 11.222.333/0001-81 &nbsp;&nbsp; Inscrição Municipal: 4.567</p>
+  <p>Endereço: Rua A, 10 - Centro &nbsp;&nbsp; Município: Araguari - MG</p>
+  <h4>TOMADOR DE SERVIÇOS</h4><p>Nome/Razão Social: ${p3.nome}</p><p>CPF/CNPJ: ${p3.cpf}</p><p>Endereço: Avenida Teste, 55 - Bairro Novo</p>
+  <h4>DISCRIMINAÇÃO DOS SERVIÇOS</h4><p>Mão de obra de pedreiro na obra da Avenida Teste, 55.</p>
+  <p><b>VALOR TOTAL DA NOTA = R$ 15.000,00</b></p><p>Valor dos Serviços: R$ 15.000,00 &nbsp;&nbsp; Alíquota: 5,00% &nbsp;&nbsp; Valor do ISS: R$ 750,00</p></div>`;
+// DANFSe em grade: rótulos numa linha, valores na de baixo
+const grade = linhas => `<table style="width:100%;border-collapse:collapse;font:10pt Arial;margin-bottom:6px">${linhas.map((l, k) =>
+  `<tr>${l.map(c => `<td style="border:1px solid #999;padding:2px 6px;${k % 2 ? "" : "font-size:8pt;color:#555"}">${c}</td>`).join("")}</tr>`).join("")}</table>`;
+const nfDanfse = `<div style="font:10pt Arial"><h3 style="margin:0">DANFSe v1.0 — Documento Auxiliar da NFS-e</h3>
+  ${grade([["Chave de Acesso da NFS-e"], ["31470032211444777000161000000000000926030000000013"]])}
+  ${grade([["Número da NFS-e", "Competência da NFS-e", "Data e Hora da emissão da NFS-e"], ["9", "01/02/2026", "05/02/2026 09:15:00"]])}
+  <b>EMITENTE DA NFS-e</b>
+  ${grade([["CNPJ / CPF / NIF", "Inscrição Municipal", "Telefone"], ["11.444.777/0001-61", "7788", "(34) 3241-0000"], ["Nome / Nome Empresarial", "E-mail", ""], ["HIDRO INSTALAÇÕES LTDA", "contato@hidro.com.br", ""],
+    ["Endereço", "Município", "CEP"], ["Rua B, 20 - Centro", "Araguari - MG", "38440-000"]])}
+  <b>TOMADOR DO SERVIÇO</b>
+  ${grade([["CNPJ / CPF / NIF", "Nome / Nome Empresarial"], [p3.cpf, p3.nome]])}
+  <b>SERVIÇO PRESTADO</b>
+  ${grade([["Código de Tributação Nacional", "Local da Prestação"], ["07.02.01", "Araguari - MG"], ["Descrição do Serviço", ""], ["Instalações hidráulicas na obra da Avenida Teste, 55.", ""]])}
+  <b>TRIBUTAÇÃO MUNICIPAL</b>${grade([["Município de Incidência do ISSQN"], ["Araguari - MG"]])}
+  <b>VALOR TOTAL DA NFS-E</b>${grade([["Valor do Serviço", "Desconto Incondicionado", "Valor Líquido da NFS-e"], ["R$ 3.200,00", "R$ 0,00", "R$ 3.200,00"]])}</div>`;
+await pdf(d + "nota-servico-152.pdf", nfMunicipal);
+await pdf(d + "danfse-9.pdf", nfDanfse);
 
 // 4) Atenção (amarelo): área do habite-se diferente da do alvará de construção e um PDF escaneado
 d = pasta("1700-2026");
@@ -177,5 +201,5 @@ await pdf(d + "alvara-legalizacao.pdf", habite({ titulo: "ALVARÁ DE LEGALIZAÇ�
 
 await b.close();
 writeFileSync(RAIZ + "LEIA-ME.txt", "Processos FICTÍCIOS para testar a leitura em lote do assistente.\n" +
-  "1500-2026: simples (com boleto de taxa, só aviso) | 3057-2026: demolição (Word) | 1600-2026: com nota fiscal (pulado) | 1700-2026: atenção | 1800-2026: ampliação (um único PDF) | 1900-2026: já tem guia de ISS | 2000-2026: duas casas (cálculo por unidade) | 2100-2026: carnê de ISS que não fecha (anexado duas vezes) | 2200-2026: guia de ISS sem texto (lida por OCR) | 2300-2026: Alvará de Legalização (construção antiga: decadência).\n");
+  "1500-2026: simples (com boleto de taxa, só aviso) | 3057-2026: demolição (Word) | 1600-2026: com notas fiscais de serviço (lidas e lançadas para conferência) | 1700-2026: atenção | 1800-2026: ampliação (um único PDF) | 1900-2026: já tem guia de ISS | 2000-2026: duas casas (cálculo por unidade) | 2100-2026: carnê de ISS que não fecha (anexado duas vezes) | 2200-2026: guia de ISS sem texto (lida por OCR) | 2300-2026: Alvará de Legalização (construção antiga: decadência).\n");
 console.log("Exemplos gerados em", RAIZ);

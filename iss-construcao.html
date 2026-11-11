@@ -634,17 +634,154 @@ const SINAIS_FORTES = [
   { re: /codigo de verificacao/g, nome: "código de verificação de nota fiscal" },
   { re: /chave de acesso/g, nome: "chave de acesso de nota fiscal" },
   { re: /documento auxiliar da nota fiscal/g, nome: "documento auxiliar da nota fiscal" },
-  { re: /\bholerite\b|\bcontracheque\b/g, nome: "holerite / contracheque" },
-  { re: /recibo de pagamento de salario|demonstrativo de pagamento/g, nome: "recibo de pagamento de salário" },
-  { re: /termo de rescisao|\btrct\b/g, nome: "termo de rescisão" },
-  { re: /\bgfip\b|\bsefip\b|fgts digital|guia de recolhimento do fgts|\bgrf\b/g, nome: "guia de FGTS (GFIP/SEFIP/GRF)" },
-  { re: /\bdctfweb\b/g, nome: "DCTFWeb" }
+  { re: /\bholerite\b|\bcontracheque\b/g, nome: "holerite / contracheque", folha: true },
+  { re: /recibo de pagamento de salario|demonstrativo de pagamento/g, nome: "recibo de pagamento de salário", folha: true },
+  { re: /termo de rescisao|\btrct\b/g, nome: "termo de rescisão", folha: true },
+  { re: /\bgfip\b|\bsefip\b|fgts digital|guia de recolhimento do fgts|\bgrf\b/g, nome: "guia de FGTS (GFIP/SEFIP/GRF)", folha: true },
+  { re: /\bdctfweb\b/g, nome: "DCTFWeb", folha: true }
 ];
 const SINAIS_FRACOS = [
   { re: /notas? fisca(?:l|is)/g, nome: "menção a nota fiscal" },
   { re: /folha de pagamento/g, nome: "menção a folha de pagamento" },
   { re: /mao de obra (?:propria|terceirizada|de terceiros)/g, nome: "menção a mão de obra própria ou de terceiros" }
 ];
+
+// ---------- Notas fiscais de serviço (NFS-e): leitura para o Anexo II ----------
+// Página de nota: título de NFS-e (municipal ou DANFSe do padrão nacional), com prestador e tomador.
+const RE_NFSE_TITULO = /\bnfs-?e\b|nota fiscal (?:eletronica )?de (?:prestacao de )?servicos?|nota fiscal de servicos? eletronica|documento auxiliar da nfs|\bdanfse\b/;
+const RE_SEC_PREST = /emitente da nfs-?e|prestador(?:a)?(?: d[eo]s? servicos?)?/g;
+const RE_SEC_TOM = /tomador(?:a)?(?: d[eo]s? servicos?)?|destinatario/g;
+const RE_SEC_FIM = /intermediario|discriminacao|descricao d[oa]s? servicos?|servico prestado|detalhamento|valor total|valores d[ao]|tributacao|calculo do issqn|informacoes complementares|outras informacoes/g;
+const RE_FIM_RAZAO = /\s+[—–-]\s+(?:cpf|cnpj)|\s(?:cpf|cnpj|inscricao|insc\.|endereco|telefone|fone|e-?mail|municipio|cep|im)\b|\s{2,}|[|;]/;
+const RE_ROT_IM = /inscricao municipal|insc\.? mun(?:icipal)?\.?|cadastro mobiliario|cod(?:igo)?\.? mobiliario|\bc\.?m\.?c\b/g;
+const RE_ROT_NUM = /\b(?:numero|n[º°o.]{1,2})\s*(?:d[ao]\s+)?(?:nfs-?e|nota(?:\s+fiscal)?)\b|\bnfs-?e\s*(?:n[º°o.]{1,2}|numero)|\bnota fiscal\s*(?:de servicos?\s*)?(?:eletronica\s*)?(?:-\s*nfs-?e\s*)?n[º°o.]{1,2}/g;
+const RE_ROT_EMISSAO = /data (?:e hora )?(?:d[ae] )?emissao|emitida em|\bemissao\b/g;
+const RE_ROT_VALOR = [/valor (?:total |bruto )?d[oa]s? servicos?/g, /valor (?:total |liquido )?da (?:nota|nfs-?e)/g, /valor total/g, /valor liquido/g];
+const RE_ROT_INCID = /municipio de incidencia(?: do issqn)?|local da prestacao(?: do servico)?|municipio da prestacao(?: do servico)?|local de incidencia/g;
+// Primeiro índice de um padrão a partir de `ini` (ou -1).
+function _achar(re, dob, ini = 0) { re.lastIndex = ini; const m = re.exec(dob); return m ? m.index : -1; }
+// Trecho da seção que começa em `ini` (prestador ou tomador): até o início de outra seção.
+function _fimSecao(dob, ini, outra) {
+  const fins = [outra > ini ? outra : -1, _achar(RE_SEC_FIM, dob, ini + 1)].filter(i => i > ini);
+  return fins.length ? Math.min(...fins) : dob.length;
+}
+// Valor depois de um rótulo, na mesma linha ou nas seguintes (notas em grade: rótulos numa linha, valores na de baixo).
+function _depois(pg, reRotulo, reValor, ini = 0, fim = pg.dob.length, janela = 160) {
+  reRotulo.lastIndex = ini; let m;
+  while ((m = reRotulo.exec(pg.dob)) && m.index < fim) {
+    const a = m.index + m[0].length, b = Math.min(fim, a + janela), v = reValor(pg.dob.slice(a, b));
+    if (v) return { valor: pg.texto.slice(a + v.i, a + v.i + v.n), ini: m.index, fim: a + v.i + v.n };
+    if (!m[0].length) reRotulo.lastIndex++;
+  }
+  return null;
+}
+// Procuradores de valor para _depois: devolvem posição (i) e tamanho (n) no trecho.
+const _pRe = re => t => { const m = re.exec(t); return m && { i: m.index + m[0].lastIndexOf(m[1]), n: m[1].length }; };
+const _pNumero = t => { const re = /\d[\d.\/,:\-]*/g; let m; while ((m = re.exec(t))) if (/^\d{1,15}$/.test(m[0])) return { i: m.index, n: m[0].length }; return null; };
+const _pMoeda = _pRe(/(\d{1,3}(?:\.\d{3})*,\d{2})(?!\d)/);
+// Data de emissão: "Rótulo: data" na mesma linha, a da mesma coluna na linha de baixo (nota em grade) ou, mais adiante,
+// a que vem com hora (a competência não tem hora). Sem isso, nada: melhor avisar do que pegar a data da competência.
+function _dataEmissao(pg) {
+  RE_ROT_EMISSAO.lastIndex = 0; let m;
+  while ((m = RE_ROT_EMISSAO.exec(pg.dob))) {
+    const a = m.index + m[0].length, L = _linhaEm(pg.texto, m.index);
+    const d = /^[\s:\-–]{0,6}(\d{2}\/\d{2}\/\d{4})/.exec(pg.texto.slice(a, L.fim)) || /^(\d{2}\/\d{2}\/\d{4})/.exec((_celulaAbaixo(pg, m.index) || "").trim())
+      || /(\d{2}\/\d{2}\/\d{4})\s+\d{2}:\d{2}/.exec(pg.texto.slice(a, a + 200));
+    if (d) return d[1];
+  }
+  return "";
+}
+// Texto depois de um rótulo: o resto da linha ou, se ele for vazio ou outro rótulo (nota em grade), a linha de baixo.
+const RE_NAO_TEXTO = /^(?:cpf|cnpj|inscri|insc\.|endere|nome|razao|telefone|fone|e-?mail|municipio|cep|uf\b|prestador|tomador|emitente|regime|tributa|retenc|codigo|pais|local|descri|valor|aliquota|base|iss|competencia|data|numero|n[º°o.]|chave|situacao|simples|optante|fantasia)/;
+// Linha do texto que contém a posição `pos`; células de uma linha (separadas por 2 ou mais espaços), com a posição de cada uma.
+function _linhaEm(texto, pos) { const f = texto.indexOf("\n", pos); return { ini: texto.lastIndexOf("\n", pos - 1) + 1, fim: f < 0 ? texto.length : f }; }
+function _celulas(linha) { const r = [], re = /\S.*?(?=\s{2,}|$)/g; let m; while ((m = re.exec(linha))) r.push({ txt: m[0], ini: m.index }); return r; }
+// Nota em grade (rótulos numa linha, valores na de baixo): o valor da mesma coluna. Se as colunas não baterem, nada
+// (melhor o fiscal preencher do que ler a coluna errada); rótulo na primeira coluna ou sozinho: o começo da linha de baixo.
+function _celulaAbaixo(pg, pos, fim = pg.texto.length) {
+  const L = _linhaEm(pg.texto, pos), cl = _celulas(pg.texto.slice(L.ini, L.fim));
+  if (L.fim + 1 >= fim) return null;
+  const k = cl.findIndex(c => pos - L.ini >= c.ini && pos - L.ini < c.ini + c.txt.length);
+  const prox = pg.texto.slice(L.fim + 1, _linhaEm(pg.texto, L.fim + 1).fim), c2 = _celulas(prox);
+  if (k < 0 || !c2.length) return null;
+  if (c2.length === cl.length) return c2[k].txt;
+  return k === 0 && /^\S/.test(prox) ? c2[0].txt : null;
+}
+function _textoApos(pg, rotulos, ini, fim, corte) {
+  const limpar = s => {
+    s = (s || "").replace(/^[\s:\-–\/=]+/, "");
+    const v = _cortar(s, dobrar(s), corte).replace(/\s+/g, " ").trim();
+    return /[a-z]{3}/i.test(v) && !RE_NAO_TEXTO.test(dobrar(v)) ? v : "";
+  };
+  for (const re of rotulos) {
+    re.lastIndex = ini; let m;
+    while ((m = re.exec(pg.dob)) && m.index < fim) {
+      // "Rótulo: valor" na mesma linha; senão, a célula de baixo.
+      const v = limpar(pg.texto.slice(m.index + m[0].length, _linhaEm(pg.texto, m.index).fim)) || limpar(_celulaAbaixo(pg, m.index, fim));
+      if (v) return v;
+      if (!m[0].length) re.lastIndex++;
+    }
+  }
+  return "";
+}
+// Número logo depois do rótulo (ex.: inscrição municipal) ou na célula de baixo.
+function _numeroApos(pg, re, ini, fim) {
+  re.lastIndex = ini; let m;
+  while ((m = re.exec(pg.dob)) && m.index < fim) {
+    const a = m.index + m[0].length, r = /^[\s:\-–nº°o.]{0,8}(\d[\d.\-\/]{0,20}\d|\d)(?!\d)/.exec(pg.texto.slice(a, _linhaEm(pg.texto, m.index).fim));
+    if (r) return r[1];
+    const c = (_celulaAbaixo(pg, m.index, fim) || "").trim();
+    if (/^\d[\d.\-\/]*$/.test(c)) return c;
+  }
+  return "";
+}
+// Razão social: rótulo próprio ou o texto depois do título da seção ("PRESTADOR DE SERVIÇOS: Fulano Ltda").
+const _razao = (pg, ini, fim, reTitulo) => _textoApos(pg, [/(?:nome\s*\/\s*)?(?:razao social|nome empresarial)/g, /\bnome\b(?!\s*fantasia)/g, reTitulo], ini, fim, RE_FIM_RAZAO);
+const RE_FIM_MUNIC = /\s{2,}|\s(?:cep|uf|telefone|fone|e-?mail)\b|[|;]/;
+const _ehAraguari = s => /araguari/.test(dobrar(s || ""));
+// Lê as notas fiscais de serviço das páginas: um item por nota, com o que foi encontrado e de onde veio.
+function lerNotasFiscais(paginas) {
+  const notas = [], vistas = new Map();
+  for (const pg of paginas) {
+    const dob = pg.dob;
+    if (!RE_NFSE_TITULO.test(dob) || !/prestador|emitente/.test(dob) || !/tomador|destinatario/.test(dob)) continue;
+    const iP = _achar(RE_SEC_PREST, dob), iT = _achar(RE_SEC_TOM, dob);
+    const fP = iP < 0 ? -1 : _fimSecao(dob, iP, iT), fT = iT < 0 ? -1 : _fimSecao(dob, iT, iP);
+    const [pIni, pFim] = iP < 0 ? [0, iT] : [iP, fP];
+    const n = { arquivo: pg.arquivo, pagina: pg.pagina, faltando: [] };
+    const num = _depois(pg, RE_ROT_NUM, _pNumero, 0, dob.length, 120);
+    n.nf = num ? num.valor.replace(/^0+(?=\d)/, "") : "";
+    let em = _dataEmissao(pg);
+    if (!em) { const c = _depois(pg, /competencia/g, _pRe(/(\d{2}\/\d{2}\/\d{4})/), 0, dob.length, 120); if (c) { em = c.valor; n.dataCompetencia = true; } }
+    n.data = em ? _dataIso(em) || "" : "";
+    let val = null;
+    for (const re of RE_ROT_VALOR) if ((val = _depois(pg, re, _pMoeda, 0, dob.length, 160))) break;
+    n.valor = val ? parseNum(val.valor) : "";
+    if (!(n.nf || n.valor)) continue; // sem número nem valor não dá para lançar
+    n.razao = _razao(pg, pIni, pFim, RE_SEC_PREST);
+    const im = _numeroApos(pg, RE_ROT_IM, pIni, pFim);
+    n.municipioPrestador = _textoApos(pg, [/\bmunicipio\b(?:\s*\/\s*uf)?/g], pIni, pFim, RE_FIM_MUNIC);
+    n.prestadorOutroMunicipio = !!n.municipioPrestador && !_ehAraguari(n.municipioPrestador);
+    n.codMob = im && !n.prestadorOutroMunicipio ? im : "";
+    const docP = (dob.slice(pIni, pFim).match(RE_CNPJ) || dob.slice(pIni, pFim).match(RE_CPF) || [])[0];
+    n.prestadorDoc = docP ? formatarDocumento(docP) : "";
+    if (iT >= 0) {
+      const sec = dob.slice(iT, fT), doc = (sec.match(RE_CNPJ) || sec.match(RE_CPF) || [])[0];
+      n.tomadorDoc = doc ? formatarDocumento(doc) : "";
+      n.tomadorNome = _razao(pg, iT, fT, RE_SEC_TOM);
+    }
+    n.municipioIncidencia = _textoApos(pg, [RE_ROT_INCID], 0, dob.length, RE_FIM_MUNIC);
+    n.cancelada = /\bnfs-?e cancelada\b|\bnota cancelada\b|\bcancelada em\b|situacao( da nfs-?e)?:?\s*cancelada/.test(dob);
+    const chave = (/chave de acesso[^\d]{0,60}((?:\d[\s.]?){44,60})/.exec(dob) || [])[1], verif = (/codigo de verificacao\s*[:\-]?\s*([a-z0-9][a-z0-9.\-]{3,40})/.exec(dob) || [])[1];
+    n.chave = chave ? "c:" + chave.replace(/\D/g, "") : verif ? `v:${verif}:${n.nf}` : `n:${n.nf}:${_digitos(n.prestadorDoc) || _chaveTexto(n.razao)}:${n.valor}`;
+    for (const [c, nome] of [["data", "data de emissão"], ["nf", "número"], ["valor", "valor"], ["razao", "prestador"]]) if (!n[c]) n.faltando.push(nome);
+    n.fonte = { arquivo: pg.arquivo, pagina: pg.pagina, trecho: _trecho(pg, num ? num.ini : 0, num ? num.fim : 80) };
+    if (vistas.has(n.chave)) { n.repetida = vistas.get(n.chave); notas.push(n); continue; }
+    vistas.set(n.chave, n);
+    notas.push(n);
+  }
+  return notas;
+}
 
 // ---------- Documentos: principal (habite-se) e comparação (alvará de construção) ----------
 const RE_TIT_PRINCIPAL = /alvara de habite-se|habite-se e baixa|alvara de baixa de (?:construcao|demolicao)|baixa de construcao|baixa de demolicao|certidao de habite-se|carta de habite-se|certidao de demolicao/;
@@ -1018,10 +1155,14 @@ function analisarProcesso(nomePasta, arquivos) {
 
   // 2. Notas fiscais e folha de pagamento
   const fortes = [], fracos = [];
-  for (const s of SINAIS_FORTES) _cada(paginas, s.re, (m, pg) => fortes.push({ nome: s.nome, fonte: _fonte(pg, m.index, m.index + m[0].length) }));
+  for (const s of SINAIS_FORTES) _cada(paginas, s.re, (m, pg) => fortes.push({ nome: s.nome, folha: !!s.folha, fonte: _fonte(pg, m.index, m.index + m[0].length) }));
   const ehPrestTomador = paginas.filter(pg => /prestador de servicos?/.test(pg.dob) && /tomador de servicos?/.test(pg.dob));
   for (const pg of ehPrestTomador) fortes.push({ nome: "nota com prestador e tomador de serviços", fonte: { arquivo: pg.arquivo, pagina: pg.pagina, trecho: "" } });
   if (!fortes.length) for (const s of SINAIS_FRACOS) _cada(paginas, s.re, (m, pg) => fracos.push({ nome: s.nome, fonte: _fonte(pg, m.index, m.index + m[0].length) }));
+  // Notas fiscais de serviço: lidas e lançadas no Anexo II para o fiscal conferir. Com folha de pagamento, ou sem
+  // nenhuma nota legível, o processo continua pulado (as notas lidas entram se o fiscal criar o rascunho).
+  const notasLidas = fortes.length ? lerNotasFiscais(paginas) : [], notas = notasLidas.filter(n => !n.repetida);
+  const sinaisFolha = fortes.filter(f => f.folha), pular = fortes.length > 0 && (sinaisFolha.length > 0 || !notas.length);
 
   // 3. Guias, boletos e carnês de ISS
   // Só conta como guia de ISS o código de barras (linha digitável com os dígitos conferidos) numa página que mencione ISS.
@@ -1185,10 +1326,34 @@ function analisarProcesso(nomePasta, arquivos) {
   const dados = { tipoObra: demolicao ? "demolicao" : "construcao", categoria: "auto" };
   const faltando = [];
 
-  if (fortes.length) {
-    const nomes = [...new Set(fortes.map(f => f.nome))];
-    diz("erro", `Encontrei indícios de nota fiscal ou folha de pagamento (${nomes.join(", ")}). Este processo tem deduções de mão de obra e foi PULADO: deve ser feito pelo fiscal.`, fortes[0].fonte);
-    fortes.slice(1, 4).forEach(f => diz("erro", `Outro indício: ${f.nome}.`, f.fonte));
+  if (notas.length) {
+    dados.usaTerceiros = true;
+    dados.terceiros = notas.map(n => ({ data: n.data, nf: n.nf, codMob: n.codMob, razao: n.razao, valor: n.valor, aceita: true, motivo: "", lida: `${n.arquivo}, pág. ${n.pagina}` }));
+  }
+  if (pular) {
+    const base = sinaisFolha.length ? sinaisFolha : fortes, nomes = [...new Set(base.map(f => f.nome))];
+    diz("erro", sinaisFolha.length
+      ? `Encontrei indícios de folha de pagamento (${nomes.join(", ")}). Este processo tem dedução de mão de obra própria e foi PULADO: deve ser feito pelo fiscal.` +
+        (notas.length ? ` As ${notas.length} nota(s) fiscal(is) de serviço lida(s) já entram no Anexo II se você criar o rascunho.` : "")
+      : `Encontrei indícios de nota fiscal (${nomes.join(", ")}), mas não consegui ler nenhuma nota de serviço (número e valor). Este processo foi PULADO: deve ser feito pelo fiscal.`, base[0].fonte);
+    base.slice(1, 4).forEach(f => diz("erro", `Outro indício: ${f.nome}.`, f.fonte));
+  } else if (notas.length) {
+    dados.temMaoDeObra = true;
+    alerta(`Li ${notas.length} nota(s) fiscal(is) de serviço e lancei no Anexo II (mão de obra de terceiros). Confira cada uma com o documento — data, número, prestador, código mobiliário e valor — e marque aceita ou glosada.`, notas[0].fonte);
+    for (const n of notas) {
+      diz("ok", `Nota fiscal nº ${n.nf || "?"}${n.data ? ` de ${dataBR(n.data)}` : ""} — ${n.razao || "prestador não identificado"}${n.codMob ? ` (inscrição municipal ${n.codMob})` : ""}: ${n.valor ? fmtBRL(n.valor) : "valor não encontrado"}.`, n.fonte);
+      const id = `A nota fiscal nº ${n.nf || "?"} (${n.arquivo}, pág. ${n.pagina})`;
+      if (n.faltando.length) alerta(`${id}: não encontrei ${n.faltando.join(", ")}. Preencha no Anexo II.`, n.fonte);
+      if (n.dataCompetencia) alerta(`${id}: não encontrei a data de emissão; usei a da competência. Confira.`, n.fonte);
+      if (n.prestadorOutroMunicipio) alerta(`${id}: prestador de outro município (${n.municipioPrestador}); o código mobiliário ficou em branco. Sem cadastro em Araguari, a dedução pode ser glosada (art. 10).`, n.fonte);
+      if (n.municipioIncidencia && !_ehAraguari(n.municipioIncidencia)) alerta(`${id}: o ISS da nota é devido a outro município (${n.municipioIncidencia}). Confira se o serviço foi tributado em Araguari (art. 10).`, n.fonte);
+      if (n.cancelada) alerta(`${id} parece estar cancelada. Confira antes de aceitar.`, n.fonte);
+    }
+    for (const n of notasLidas.filter(n => n.repetida)) avisa(`A nota fiscal nº ${n.nf || "?"} (${n.arquivo}, pág. ${n.pagina}) repete a de “${n.repetida.arquivo}”, pág. ${n.repetida.pagina}, e não foi lançada de novo.`, n.fonte);
+    // Sinais de nota fiscal em páginas que não foram lidas como nota de serviço (ex.: DANFE de mercadoria, nota ilegível).
+    const lidas = new Set(notasLidas.map(n => n.arquivo + "|" + n.pagina)), soltas = new Map();
+    for (const f of fortes) if (!f.folha && !lidas.has(f.fonte.arquivo + "|" + f.fonte.pagina) && !soltas.has(f.fonte.arquivo + "|" + f.fonte.pagina)) soltas.set(f.fonte.arquivo + "|" + f.fonte.pagina, f);
+    if (soltas.size) alerta(`Há sinais de nota fiscal que não foram lidos como nota de serviço (${[...soltas.values()].slice(0, 4).map(f => `${f.fonte.arquivo}, pág. ${f.fonte.pagina}: ${f.nome}`).join("; ")}). Confira se falta lançar alguma nota.`, [...soltas.values()][0].fonte);
   } else if (fracos.length) {
     dados.temMaoDeObra = null;
     alerta(`Não encontrei notas fiscais nem folha de pagamento, mas há ${[...new Set(fracos.map(f => f.nome))].join(" e ")}. Confirme se o requerente apresentou comprovação de mão de obra (a pergunta ficou sem resposta).`, fracos[0].fonte);
@@ -1242,6 +1407,9 @@ function analisarProcesso(nomePasta, arquivos) {
   const selDoc = _selecionar(cDoc);
   if (selDoc) { dados.documento = selDoc.escolhido.valor; relatar("CPF/CNPJ do requerente (dígitos conferidos)", selDoc); } else faltando.push("CPF/CNPJ válido do requerente");
   for (const c of invalidos) if (!selDoc || c.origem === selDoc.nivel) alerta(`O documento ${c.valor}, próximo ao requerente, tem dígitos verificadores inválidos.`, c.fonte);
+  // Notas lançadas: o tomador do serviço deve ser o requerente (art. 9º, X).
+  if (!pular) for (const n of notas) if (n.tomadorDoc && dados.documento && _digitos(n.tomadorDoc) !== _digitos(dados.documento))
+    alerta(`A nota fiscal nº ${n.nf || "?"} (${n.arquivo}, pág. ${n.pagina}) tem como tomador ${n.tomadorNome || "outra pessoa"} (${n.tomadorDoc}), e não o requerente (${dados.documento}). Confira (art. 9º, X).`, n.fonte);
 
   const selCci = _selecionar(cCci);
   if (selCci) { dados.cci = selCci.escolhido.valor; relatar("CCI", selCci); } else faltando.push("CCI");
@@ -1340,7 +1508,7 @@ function analisarProcesso(nomePasta, arquivos) {
   for (const f of faltando) alerta(`Não encontrei: ${f}.`);
   if (!lidos.length) alerta("Nenhum arquivo deste processo pôde ser lido.");
 
-  const semaforo = fortes.length ? "vermelho" : alertas.length ? "amarelo" : "verde";
+  const semaforo = pular ? "vermelho" : alertas.length ? "amarelo" : "verde";
   diz(semaforo === "verde" ? "ok" : semaforo === "vermelho" ? "erro" : "alerta",
     semaforo === "verde" ? "Resultado: caso simples. Todos os dados foram encontrados e conferem; falta apenas a conferência do fiscal."
       : semaforo === "amarelo" ? `Resultado: precisa de atenção (${alertas.length} alerta(s)).`
@@ -1491,6 +1659,7 @@ function checklist(p, res) {
       auto(ns.every(n => n.aceita === false || (n.codMob || "").trim()), "Anexo II — código mobiliário do prestador nas notas aceitas", false,
         "Sem cadastro mobiliário em Araguari, a dedução pode ser glosada (art. 10).");
       if (p.inicioObra || fimDaObra(p)) auto(ns.every(n => dentroPeriodo(p, n.data)), "Anexo II — datas das notas dentro do período da obra", false);
+      if (ns.some(n => n.lida)) manual("nf_lidas", "Notas lidas automaticamente conferidas com os documentos (data, número, prestador e valor)");
       manual("nf_requisitos", "Notas com emitente, destinatário e endereço da obra (art. 9º, X)");
       manual("nf_iss", "Serviços tributados pelo ISS em Araguari (art. 10)");
     }
@@ -1786,7 +1955,7 @@ function tabelaPropria(p) {
 function tabelaTerceiros(p) {
   const rows = ordemNotas(p.terceiros).map(i => [p.terceiros[i], i]).map(([n, i]) => `<tr data-nota="${i}" class="${n.aceita === false ? "glosada" : ""}">
     <td><input type="date" data-l="terceiros" data-i="${i}" data-c="data" value="${esc(n.data)}"></td>
-    <td><input type="text" data-l="terceiros" data-i="${i}" data-c="nf" value="${esc(n.nf)}" style="min-width:70px"></td>
+    <td><input type="text" data-l="terceiros" data-i="${i}" data-c="nf" value="${esc(n.nf)}" style="min-width:70px">${n.lida ? `<small class="muted" style="display:block;font-size:11px" title="Lida automaticamente: confira com o documento">lida de ${esc(n.lida)}</small>` : ""}</td>
     <td><input type="text" data-l="terceiros" data-i="${i}" data-c="codMob" value="${esc(n.codMob)}" style="min-width:80px"></td>
     <td><input type="text" data-l="terceiros" data-i="${i}" data-c="razao" value="${esc(n.razao)}" style="min-width:150px"></td>
     <td><input type="text" data-l="terceiros" data-i="${i}" data-c="valor" data-num inputmode="decimal" value="${n.valor === "" || n.valor == null ? "" : fmtNum(parseNum(n.valor))}" style="text-align:right;min-width:90px"></td>
@@ -2570,10 +2739,11 @@ iniciarPastaJson();
 const SEMAFORO = {
   verde: { ic: "🟢", nome: "Simples" },
   amarelo: { ic: "🟡", nome: "Atenção" },
-  vermelho: { ic: "🔴", nome: "Com nota/folha — pulado" },
+  vermelho: { ic: "🔴", nome: "Pulado — para o fiscal" },
   ignorado: { ic: "⚪", nome: "Já existia — ignorado" }
 };
 const seloSemaforo = s => `<span class="sem ${s}">${SEMAFORO[s].ic} ${SEMAFORO[s].nome}</span>`;
+const seloNotas = ns => (ns || []).some(n => n.lida) ? `<span class="sem guia" title="Notas fiscais lidas e lançadas no Anexo II: confira">🧾 ${ns.filter(n => n.lida).length} nota(s) fiscal(is)</span>` : "";
 const seloGuia = guias => guias && guias.length
   ? `<span class="sem guia" title="${esc(guias.map(g => g.arquivo + (g.total ? " — " + fmtBRL(g.total) : "")).join("; "))}">💲 ${guias.some(g => g.carne) ? "Carnê" : "Guia"} de ISS${guias.some(g => g.pago) ? " (paga?)" : ""}</span>` : "";
 const EXT_IMAGEM = ["jpg", "jpeg", "png", "gif", "bmp", "tif", "tiff", "heic", "heif", "webp"];
@@ -2669,6 +2839,24 @@ async function ocrCanvas(cv) {
 // Canvas branco com no máximo `max` pixels no maior lado.
 function _canvas(l, a) { const c = document.createElement("canvas"); c.width = Math.round(l); c.height = Math.round(a); const x = c.getContext("2d"); x.fillStyle = "#fff"; x.fillRect(0, 0, c.width, c.height); return c; }
 const _temTexto = t => String(t || "").replace(/\s/g, "").length >= 15;
+// Junta os pedaços de texto de uma página. O pdf.js separa as células de uma tabela (ou colunas) com um espaço só,
+// como se fossem uma frase; um espaço grande entre dois pedaços da mesma linha vira dois espaços, que separam os campos.
+function textoDaPagina(items) {
+  let t = "", ant = null;
+  for (const x of items) {
+    const s = x.str || "";
+    if (s.trim()) {
+      if (ant && t && !t.endsWith("\n") && x.transform && ant.transform) {
+        const h = Math.abs(ant.transform[3]) || ant.height || 10;
+        const vao = x.transform[4] - (ant.transform[4] + (ant.width || 0));
+        if (Math.abs(x.transform[5] - ant.transform[5]) < h * 0.5 && vao > h * 1.2) t = t.replace(/ +$/, "") + "  ";
+      }
+      ant = x;
+    }
+    t += s + (x.hasEOL ? "\n" : "");
+  }
+  return t;
+}
 // Lê o texto de cada página; páginas sem texto passam pelo OCR (se ligado).
 async function lerPDF(buf, opcoes = {}) {
   const pdfjs = await carregarPdfjs();
@@ -2680,7 +2868,7 @@ async function lerPDF(buf, opcoes = {}) {
     for (let i = 1; i <= doc.numPages; i++) {
       const pagina = await doc.getPage(i);
       const c = await pagina.getTextContent();
-      let t = c.items.map(x => (x.str || "") + (x.hasEOL ? "\n" : "")).join("");
+      let t = textoDaPagina(c.items);
       if (!_temTexto(t) && opcoes.ocr && !erroOcr) {
         if (opcoes.progresso) opcoes.progresso(i, doc.numPages);
         try {
@@ -2846,7 +3034,7 @@ function lerCamposDaTela(p) {
 }
 function criarDeLeitura(an, pasta, forcado) {
   const p = novoProcesso();
-  for (const k of ["processo", "anoManual", "requerente", "documento", "cci", "endereco", "area", "unidades", "tipoObra", "categoria", "fimObra", "decAnalisar"]) if (an.dados[k] !== undefined) p[k] = an.dados[k];
+  for (const k of ["processo", "anoManual", "requerente", "documento", "cci", "endereco", "area", "unidades", "tipoObra", "categoria", "fimObra", "decAnalisar", "usaTerceiros", "terceiros"]) if (an.dados[k] !== undefined) p[k] = an.dados[k];
   p.temMaoDeObra = forcado ? null : (an.dados.temMaoDeObra === undefined ? null : an.dados.temMaoDeObra);
   const alertas = an.alertas.slice();
   const narrativa = an.narrativa.slice(0, -1), conclusao = an.narrativa[an.narrativa.length - 1];
@@ -2927,7 +3115,7 @@ function vistaLote() {
   const linhas = itens.map((it, k) => {
     const p = it.processoId && db.processos[it.processoId];
     const r = p ? resultado(p) : null;
-    return `<tr><td>${seloSemaforo(it.semaforo)} ${seloGuia(it.guias)}</td><td><b>${esc(it.pasta)}</b></td>
+    return `<tr><td>${seloSemaforo(it.semaforo)} ${seloGuia(it.guias)} ${seloNotas(it.dados.terceiros)}</td><td><b>${esc(it.pasta)}</b></td>
       <td>${esc((p && p.processo) || it.dados.processo || "—")}</td><td>${esc((p && p.requerente) || it.dados.requerente || "—")}</td>
       <td class="num">${r ? fmtNum(r.area) + " m²" : "—"}</td><td class="num">${r ? fmtBRL(r.iss) : "—"}</td>
       <td>${p ? `<span class="selo ${p.status}">${p.status === "concluido" ? "Concluído" : "Rascunho"}</span>` : ""}</td>
@@ -2942,7 +3130,8 @@ function vistaLote() {
     <ul class="muted" style="margin-top:0">
       <li>🟢 <b>Simples:</b> todos os dados encontrados e coerentes. Memória e decisão já ficam prontas; o fiscal confere e conclui.</li>
       <li>🟡 <b>Atenção:</b> dado faltando, divergente ou arquivo não lido. O rascunho é criado com os alertas.</li>
-      <li>🔴 <b>Com nota fiscal ou folha de pagamento:</b> o processo é pulado e fica para o fiscal.</li>
+      <li>🧾 <b>Com nota fiscal de serviço:</b> as notas são lidas e lançadas no Anexo II (data, número, prestador, código mobiliário e valor). O processo fica 🟡 para o fiscal conferir cada nota e marcar aceita ou glosada.</li>
+      <li>🔴 <b>Com folha de pagamento, ou nota fiscal que não deu para ler:</b> o processo é pulado e fica para o fiscal.</li>
     </ul>
     <p class="muted">Tudo é feito neste computador; nenhum arquivo é enviado para a internet. Nenhum processo é concluído automaticamente.</p>
     ${estadoLote.rodando ? `<div class="aviso info">${esc(estadoLote.msg)}</div>`
@@ -2962,7 +3151,7 @@ function vistaLote() {
 function cardLeitura(p) {
   const l = p.leitura, aviso = avisoCalcLeitura(p, resultado(p));
   return `<div class="card leitura ${l.semaforo}"><div class="acoes" style="justify-content:space-between">
-      <h2 style="margin:0">Leitura automática ${seloSemaforo(l.semaforo)} ${seloGuia(l.guias)}</h2>
+      <h2 style="margin:0">Leitura automática ${seloSemaforo(l.semaforo)} ${seloGuia(l.guias)} ${seloNotas(p.terceiros)}</h2>
       <span class="muted">Pasta “${esc(l.pasta)}” · ${new Date(l.em).toLocaleString("pt-BR")}</span></div>
     <div id="avisoCalcLeitura">${aviso}</div>
     ${l.alertas.length ? `<div class="aviso warn"><b>Confira:</b><ul class="alertas">${l.alertas.map(a => `<li>${esc(a)}</li>`).join("")}</ul></div>`

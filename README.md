@@ -46,7 +46,7 @@ O cálculo é refeito a cada alteração. O botão **↻ Recalcular**, no painel
 
 ## Leitura em lote (preenchimento automático)
 
-Para os casos calculados **somente pela área** (sem notas fiscais nem folha de pagamento):
+Para os casos calculados pela área, inclusive com **notas fiscais de serviço** (as notas são lidas e lançadas para o fiscal conferir). Processos com folha de pagamento continuam com o fiscal.
 
 1. Baixe os processos para uma pasta, **uma pasta para cada processo**. Todos os arquivos de uma mesma pasta são lidos juntos; se você escolher a pasta de um único processo, ela mesma é o processo. Pastas sem PDF/Word (só fotos, por exemplo) são ignoradas.
 2. No assistente, abra **Leitura em lote → Escolher pasta dos processos…**.
@@ -61,7 +61,16 @@ Para os casos calculados **somente pela área** (sem notas fiscais nem folha de 
    - 🟢 **Simples** — tudo encontrado e coerente: o rascunho é criado com memória e decisão prontas; o fiscal só confere e conclui.
    - 🟡 **Atenção** — dado faltando ou divergente, ampliação, endereço genérico, PDF escaneado etc.: o rascunho é criado com os alertas.
    - 💲 **Guia ou carnê de ISS** — só conta como guia de ISS o **código de barras** (a linha digitável, com os dígitos verificadores conferidos) **numa página em que esteja escrito ISS** (ISS, I.S.S., ISSQN ou “imposto sobre serviços”). Assim, matrículas e certidões que citam “ISSQN” nos emolumentos do cartório, guias de ITBI ou “pago em” não viram guia de ISS. Código de barras sem ISS na página (boleto de outra taxa) e documento que menciona ISS e parece guia, mas sem código de barras legível, geram apenas um aviso “para conhecimento”. O valor é lido da **linha digitável** (com os dígitos conferidos), parcela a parcela; o programa soma as parcelas do carnê, **compara com o ISS que deveria ser pago** e aponta a diferença. O processo fica 🟡.
-   - 🔴 **Com nota fiscal ou folha de pagamento** — o processo é **pulado** e fica para o fiscal (há um botão para criar o rascunho mesmo assim).
+   - 🧾 **Com nota fiscal de serviço (NFS-e)** — as notas são **lidas e lançadas no Anexo II** (mão de obra de terceiros), já respondida a pergunta da mão de obra. De cada nota: **data de emissão, número, código mobiliário** (a inscrição municipal do prestador), **razão social e valor** dos serviços. O processo fica 🟡 para o fiscal **conferir cada nota** com o documento e marcar aceita ou glosada; no Anexo II, cada nota mostra de qual arquivo e página foi lida, e o checklist pede essa conferência. Funciona com as notas municipais (“Rótulo: valor”) e com o DANFSe do padrão nacional (rótulos numa linha e valores na de baixo). O programa também aponta, para a conferência dos arts. 9º e 10:
+     - **tomador** diferente do requerente;
+     - **prestador de outro município** (aí o código mobiliário fica em branco: a inscrição é de outra prefeitura);
+     - ISS devido a **outro município** (município de incidência ou local da prestação);
+     - nota **cancelada**;
+     - campo não encontrado (o fiscal preenche);
+     - data de emissão não encontrada, quando usa a da competência;
+     - a mesma nota anexada de novo, que não entra duas vezes;
+     - menção a nota fiscal que não foi lida como nota de serviço (por exemplo, DANFE de mercadoria).
+   - 🔴 **Com folha de pagamento, ou nota fiscal que não deu para ler** (sem número nem valor) — o processo é **pulado** e fica para o fiscal (há um botão para criar o rascunho mesmo assim; as notas que foram lidas já entram no Anexo II).
 5. **“O que o programa fez”**: para cada dado, o arquivo, a página e o trecho original de onde ele saiu. Também sai como documento imprimível (“Relatório de leitura”).
    **“Ver texto lido”** mostra o texto exatamente como o programa leu cada arquivo (só logo após a leitura do lote; não fica salvo) — útil para conferir ou relatar erros de leitura.
 6. **Imprimir memória + decisão dos simples** gera, numa só impressão, os documentos de todos os casos simples.
