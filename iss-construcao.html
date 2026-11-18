@@ -282,6 +282,18 @@ function ordemNotas(notas) {
   });
 }
 const notasEmOrdem = notas => ordemNotas(notas || []).map(i => notas[i]);
+// Ordem dos lançamentos da folha pela competência; na mesma competência, pelo nome do empregado e a folha antes da
+// rescisão. Os sem competência ficam no fim, na ordem em que foram lançados. Devolve os índices na lista.
+function ordemFolha(linhas) {
+  const nome = (a, b) => String(linhas[a].nome || "").localeCompare(String(linhas[b].nome || ""), "pt-BR", { sensitivity: "base" });
+  const tipo = i => linhas[i].tipo === "rescisao" ? 1 : 0;
+  return (linhas || []).map((_, i) => i).sort((a, b) => {
+    const x = linhas[a].competencia || "", y = linhas[b].competencia || "";
+    if (!x !== !y) return x ? -1 : 1;
+    return (x < y ? -1 : x > y ? 1 : 0) || (x ? nome(a, b) || tipo(a) - tipo(b) : 0) || a - b;
+  });
+}
+const folhaEmOrdem = linhas => ordemFolha(linhas || []).map(i => linhas[i]);
 function totalLinhaPropria(l) { return r2(parseNum(l.salario) + parseNum(l.inss) + parseNum(l.fgts)); }
 
 // ---------- Decadência (CTN, arts. 150, § 4º, 156, V, e 173, I) ----------
@@ -1941,16 +1953,18 @@ function seletorGlosa(lista, i, l) {
 function tabelaPropria(p) {
   const inp = (i, c, v, extra = "") => `<input type="text" data-l="propria" data-i="${i}" data-c="${c}" value="${esc(v)}" ${extra}>`;
   const money = (i, c, l) => inp(i, c, l[c] === "" || l[c] == null ? "" : fmtNum(parseNum(l[c])), 'data-num inputmode="decimal" style="text-align:right;min-width:90px"');
-  const rows = p.propria.map((l, i) => `<tr class="${l.aceita === false ? "glosada" : ""}">
+  const rows = ordemFolha(p.propria).map(i => [p.propria[i], i]).map(([l, i]) => `<tr data-linha="${i}" class="${l.aceita === false ? "glosada" : ""}">
     <td><input type="month" data-l="propria" data-i="${i}" data-c="competencia" value="${esc(l.competencia)}"></td>
+    <td>${inp(i, "nome", l.nome || "", 'placeholder="Nome do empregado" style="min-width:170px"')}</td>
     <td><select data-l="propria" data-i="${i}" data-c="tipo"><option value="folha" ${l.tipo !== "rescisao" ? "selected" : ""}>Folha</option><option value="rescisao" ${l.tipo === "rescisao" ? "selected" : ""}>Rescisão</option></select></td>
     <td>${money(i, "salario", l)}</td><td>${money(i, "inss", l)}</td><td>${money(i, "fgts", l)}</td>
     <td class="num" data-total-propria="${i}">${fmtBRL(totalLinhaPropria(l))}</td>
     <td style="min-width:150px">${seletorGlosa("propria", i, l)}</td>
     <td><button class="btn peq perigo" data-acao="remLinha" data-l="propria" data-i="${i}" title="Remover">✕</button></td></tr>`).join("");
-  return `<h3>Anexo I — Mão de obra própria</h3><div class="rolagem"><table class="dados"><thead><tr><th>Competência</th><th>Tipo</th><th>Salário</th><th>INSS</th><th>FGTS</th><th class="num">Total</th><th>Situação</th><th></th></tr></thead>
-    <tbody>${rows || `<tr><td colspan="8" class="muted">Nenhum lançamento.</td></tr>`}</tbody></table></div>
-    <button class="btn peq" data-acao="addLinha" data-l="propria" style="margin-top:6px">+ Adicionar competência</button>`;
+  return `<h3>Anexo I — Mão de obra própria</h3><div class="rolagem"><table class="dados"><thead><tr><th>Competência</th><th>Empregado</th><th>Tipo</th><th>Salário</th><th>INSS</th><th>FGTS</th><th class="num">Total</th><th>Situação</th><th></th></tr></thead>
+    <tbody id="linhasPropria">${rows || `<tr><td colspan="9" class="muted">Nenhum lançamento.</td></tr>`}</tbody></table></div>
+    <button class="btn peq" data-acao="addLinha" data-l="propria" style="margin-top:6px">+ Adicionar competência</button>
+    <span class="muted" style="font-size:12px;margin-left:6px">Os lançamentos ficam em ordem de competência.</span>`;
 }
 function tabelaTerceiros(p) {
   const rows = ordemNotas(p.terceiros).map(i => [p.terceiros[i], i]).map(([n, i]) => `<tr data-nota="${i}" class="${n.aceita === false ? "glosada" : ""}">
@@ -2027,11 +2041,11 @@ function docMemoria(p, res) {
   let anexos = "";
   if (res.comMaoDeObra) {
     if (p.usaPropria) {
-      const rows = p.propria.map(l => `<tr><td>${competenciaBR(l.competencia)}</td><td>${l.tipo === "rescisao" ? "Rescisão" : "Folha"}</td>
+      const rows = folhaEmOrdem(p.propria).map(l => `<tr><td>${competenciaBR(l.competencia)}</td><td>${esc(l.nome || "")}</td><td>${l.tipo === "rescisao" ? "Rescisão" : "Folha"}</td>
         <td class="num">${fmtNum(parseNum(l.salario))}</td><td class="num">${fmtNum(parseNum(l.inss))}</td><td class="num">${fmtNum(parseNum(l.fgts))}</td>
         <td class="num">${fmtNum(totalLinhaPropria(l))}</td><td>${l.aceita === false ? "Glosada" : "Aceita"}</td></tr>`).join("");
-      anexos += `<h3>Anexo I — Mão de obra própria</h3><table><thead><tr><th>Competência</th><th>Tipo</th><th class="num">Salário</th><th class="num">INSS</th><th class="num">FGTS</th><th class="num">Total</th><th>Situação</th></tr></thead>
-        <tbody>${rows || `<tr><td colspan="7">—</td></tr>`}<tr><th colspan="5">TOTAL MÃO DE OBRA PRÓPRIA (aceita)</th><th class="num">${fmtNum(res.propriaAceita)}</th><th></th></tr></tbody></table>`;
+      anexos += `<h3>Anexo I — Mão de obra própria</h3><table><thead><tr><th>Competência</th><th>Empregado</th><th>Tipo</th><th class="num">Salário</th><th class="num">INSS</th><th class="num">FGTS</th><th class="num">Total</th><th>Situação</th></tr></thead>
+        <tbody>${rows || `<tr><td colspan="8">—</td></tr>`}<tr><th colspan="6">TOTAL MÃO DE OBRA PRÓPRIA (aceita)</th><th class="num">${fmtNum(res.propriaAceita)}</th><th></th></tr></tbody></table>`;
     }
     if (p.usaTerceiros) {
       const rows = notasEmOrdem(p.terceiros).map(n => `<tr><td>${dataBR(n.data)}</td><td>${esc(n.nf)}</td><td>${esc(n.codMob)}</td><td>${esc(n.razao)}</td>
@@ -2039,7 +2053,7 @@ function docMemoria(p, res) {
       anexos += `<h3>Anexo II — Mão de obra de terceiros</h3><table><thead><tr><th>Data</th><th>Nº da NF</th><th>Cód. mobiliário</th><th>Razão social</th><th class="num">Valor</th><th>Situação</th></tr></thead>
         <tbody>${rows || `<tr><td colspan="6">—</td></tr>`}<tr><th colspan="4">TOTAL MÃO DE OBRA DE TERCEIROS (aceita)</th><th class="num">${fmtNum(res.terceirosAceita)}</th><th></th></tr></tbody></table>`;
     }
-    const glosas = [...(p.usaPropria ? p.propria.map(l => ({ d: `Folha ${competenciaBR(l.competencia)}${l.tipo === "rescisao" ? " (rescisão)" : ""}`, v: totalLinhaPropria(l), l })) : []),
+    const glosas = [...(p.usaPropria ? folhaEmOrdem(p.propria).map(l => ({ d: `Folha ${competenciaBR(l.competencia)}${l.nome ? ` – ${l.nome}` : ""}${l.tipo === "rescisao" ? " (rescisão)" : ""}`, v: totalLinhaPropria(l), l })) : []),
       ...(p.usaTerceiros ? notasEmOrdem(p.terceiros).map(n => ({ d: `NF ${n.nf} – ${n.razao}`, v: parseNum(n.valor), l: n })) : [])].filter(x => x.l.aceita === false);
     if (glosas.length) anexos += `<h3>Valores glosados</h3><table><thead><tr><th>Documento</th><th class="num">Valor</th><th>Motivo</th></tr></thead><tbody>
       ${glosas.map(g => `<tr><td>${esc(g.d)}</td><td class="num">${fmtNum(g.v)}</td><td>${esc(motivoTexto(g.l))}</td></tr>`).join("")}</tbody></table>`;
@@ -2457,7 +2471,7 @@ const acoes = {
   },
   addLinha(el) {
     const p = proc();
-    if (el.dataset.l === "propria") p.propria.push({ competencia: "", tipo: "folha", salario: "", inss: "", fgts: "", aceita: true, motivo: "" });
+    if (el.dataset.l === "propria") p.propria.push({ competencia: "", nome: "", tipo: "folha", salario: "", inss: "", fgts: "", aceita: true, motivo: "" });
     else if (el.dataset.l === "unidades") p.unidades.push({ rotulo: "", area: "", categoria: "auto" });
     else p.terceiros.push({ data: "", nf: "", codMob: "", razao: "", valor: "", aceita: true, motivo: "" });
     tocar(p); render();
@@ -2690,13 +2704,15 @@ document.addEventListener("change", e => {
   }
   if (t.dataset.num !== undefined && t.value !== "") t.value = fmtNum(parseNum(t.value)); // reformata ao sair do campo
 });
-// Notas fiscais: ao sair da tabela, as linhas são postas em ordem de emissão. Só as linhas mudam de lugar,
-// sem redesenhar a tela, para não atrapalhar o que se clicou fora dela.
+// Notas fiscais (ordem de emissão) e folha (ordem de competência): ao sair da tabela, as linhas são postas em ordem.
+// Só as linhas mudam de lugar, sem redesenhar a tela, para não atrapalhar o que se clicou fora dela.
+const TABELAS_EM_ORDEM = { notasTerceiros: ["terceiros", "nota", ordemNotas], linhasPropria: ["propria", "linha", ordemFolha] };
 document.addEventListener("focusout", e => {
-  const tb = e.target.closest && e.target.closest("#notasTerceiros"), p = proc();
+  const tb = e.target.closest && e.target.closest("#notasTerceiros, #linhasPropria"), p = proc();
   if (!tb || !p || (e.relatedTarget && tb.contains(e.relatedTarget))) return;
-  const linhas = new Map([...tb.querySelectorAll("tr[data-nota]")].map(tr => [tr.dataset.nota, tr]));
-  for (const i of ordemNotas(p.terceiros)) { const tr = linhas.get(String(i)); if (tr) tb.append(tr); }
+  const [lista, attr, ordem] = TABELAS_EM_ORDEM[tb.id];
+  const linhas = new Map([...tb.querySelectorAll(`tr[data-${attr}]`)].map(tr => [tr.dataset[attr], tr]));
+  for (const i of ordem(p[lista])) { const tr = linhas.get(String(i)); if (tr) tb.append(tr); }
 });
 // Aceita o backup completo e os .json de processos (um ou vários arquivos).
 async function importarBackup(files) {

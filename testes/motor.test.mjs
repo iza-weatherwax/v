@@ -7,7 +7,7 @@ import vm from "node:vm";
 const html = readFileSync(new URL("../iss-construcao.html", import.meta.url), "utf8");
 const codigo = html.match(/<script id="motor">([\s\S]*?)<\/script>/)[1];
 const M = vm.createContext({});
-vm.runInContext(codigo + "\n;this.api={calcular,TABELA_PADRAO,extensoReais,parseNum,anoDoProcesso,categoriaPorArea,parseCSV,montarCSV,mesclarCSV,csvLinhaProcesso,cpfValido,cnpjValido,r2,calcularDecadencia,somarAnos,CSV_COLUNAS,nomeArquivoJson,processoNoAP,ordemNotas};", M);
+vm.runInContext(codigo + "\n;this.api={calcular,TABELA_PADRAO,extensoReais,parseNum,anoDoProcesso,categoriaPorArea,parseCSV,montarCSV,mesclarCSV,csvLinhaProcesso,cpfValido,cnpjValido,r2,calcularDecadencia,somarAnos,CSV_COLUNAS,nomeArquivoJson,processoNoAP,ordemNotas,ordemFolha};", M);
 const A = M.api;
 const base = (x) => ({ processo: "", anoManual: "", tipoObra: "construcao", categoria: "auto", area: 0, temMaoDeObra: false,
   usaPropria: false, usaTerceiros: false, propria: [], terceiros: [], ...x });
@@ -219,4 +219,14 @@ test("notas fiscais em ordem de data de emissão", () => {
   // o cálculo não depende da ordem
   const p = base({ processo: "1/2025", area: 99, temMaoDeObra: true, usaTerceiros: true, terceiros: notas.map((n, i) => ({ ...n, valor: 100 * (i + 1) })) });
   assert.equal(calc(p).terceirosAceita, calc({ ...p, terceiros: [...p.terceiros].reverse() }).terceirosAceita);
+});
+
+test("folha de pagamento em ordem de competência", () => {
+  const folha = [
+    { competencia: "2025-03", nome: "Pedro Souza" }, { competencia: "", nome: "Novo" }, { competencia: "2024-12", nome: "Ana Lima" },
+    { competencia: "2025-03", nome: "álvaro Dias", tipo: "rescisao" }, { competencia: "2025-03", nome: "Álvaro Dias" }, { competencia: "2025-01", nome: "Pedro Souza" }
+  ];
+  // competência mais antiga primeiro; na mesma, pelo nome (sem ligar para acento e maiúscula), folha antes da rescisão; sem competência no fim
+  assert.deepEqual([...A.ordemFolha(folha)], [2, 5, 4, 3, 0, 1]);
+  assert.deepEqual([...A.ordemFolha([])], []);
 });
